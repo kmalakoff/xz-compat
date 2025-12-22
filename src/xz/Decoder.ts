@@ -280,19 +280,9 @@ function parseIndex(
 }
 
 /**
- * Decompress XZ data synchronously
- * Uses @napi-rs/lzma if available on Node 14+, falls back to pure JS
- * Properly handles multi-block XZ files and stream padding
- * @param input - XZ compressed data
- * @returns Decompressed data
+ * Pure JS XZ decompression (handles all XZ spec features)
  */
-export function decodeXZ(input: Buffer): Buffer {
-  // Try native acceleration first (Node 14+ with @napi-rs/lzma installed)
-  const native = tryLoadNative();
-  if (native) {
-    return native.xz.decompressSync(input);
-  }
-
+function decodeXZPure(input: Buffer): Buffer {
   // Verify XZ magic
   if (input.length < 12 || !bufferEquals(input, 0, XZ_MAGIC)) {
     throw new Error('Invalid XZ magic bytes');
@@ -369,6 +359,33 @@ export function decodeXZ(input: Buffer): Buffer {
   }
 
   return Buffer.concat(outputChunks);
+}
+
+/**
+ * Decompress XZ data synchronously
+ * Uses @napi-rs/lzma if available on Node 14+, falls back to pure JS
+ * Properly handles multi-block XZ files, stream padding, and concatenated streams
+ * @param input - XZ compressed data
+ * @returns Decompressed data
+ */
+export function decodeXZ(input: Buffer): Buffer {
+  // Try native acceleration first (Node 14+ with @napi-rs/lzma installed)
+  const native = tryLoadNative();
+  if (native) {
+    try {
+      return native.xz.decompressSync(input);
+    } catch (nativeErr) {
+      // Native failed - try pure JS (handles more edge cases like
+      // stream padding, concatenated streams, SHA-256 checksums)
+      try {
+        return decodeXZPure(input);
+      } catch {
+        // Both failed - throw the native error (usually more informative)
+        throw nativeErr;
+      }
+    }
+  }
+  return decodeXZPure(input);
 }
 
 /**

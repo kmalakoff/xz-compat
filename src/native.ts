@@ -6,10 +6,22 @@
  * or when the native module is not available.
  */
 
+import Module from 'module';
+import path from 'path';
+import url from 'url';
+
+// Get __dirname for ES modules
+const _require = typeof require === 'undefined' ? Module.createRequire(import.meta.url) : require;
+const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : url.fileURLToPath(import.meta.url));
+
+// Get node_modules path (go up from dist/cjs to package root, then to node_modules)
+const nodeModulesPath = path.join(__dirname, '..', '..', 'node_modules');
+
 // Cache for native module loading result
 let nativeModule: NativeModule | null | undefined;
 let nodeVersionChecked = false;
 let nodeVersionSupported = false;
+let installationAttempted = false;
 
 interface NativeModule {
   xz: {
@@ -45,6 +57,35 @@ function checkNodeVersion(): boolean {
 }
 
 /**
+ * Install @napi-rs/lzma using install-module-linked
+ */
+function installNativeModule(callback: (err: Error | null) => void): void {
+  // Only attempt installation once
+  if (installationAttempted) {
+    callback(new Error('Installation already attempted'));
+    return;
+  }
+  installationAttempted = true;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const installModule = _require('install-module-linked').default;
+
+    console.log('Installing @napi-rs/lzma for native acceleration...');
+    installModule('@napi-rs/lzma', nodeModulesPath, {}, (err: Error | null) => {
+      if (err) {
+        console.warn('Failed to install @napi-rs/lzma:', err.message);
+      } else {
+        console.log('Successfully installed @napi-rs/lzma');
+      }
+      callback(err);
+    });
+  } catch (err) {
+    callback(err as Error);
+  }
+}
+
+/**
  * Try to load the native @napi-rs/lzma module
  * Returns null if not available or Node version is too old
  */
@@ -58,16 +99,31 @@ export function tryLoadNative(): NativeModule | null {
     return null;
   }
 
-  // Try to load native module
+  // Try to load native module (it should be installed at module load time)
   try {
-    // Use require to load optional dependency
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    nativeModule = require('@napi-rs/lzma') as NativeModule;
+    nativeModule = _require('@napi-rs/lzma') as NativeModule;
     return nativeModule;
   } catch {
+    // Module not installed yet - return null
     nativeModule = null;
     return null;
   }
+}
+
+// At module load time, attempt to install @napi-rs/lzma on Node 14+
+// This is done asynchronously so it doesn't block module initialization
+if (checkNodeVersion()) {
+  installNativeModule(() => {
+    // Installation complete - clear cache and try to load
+    nativeModule = undefined; // Clear cache to force re-check
+    try {
+      nativeModule = _require('@napi-rs/lzma') as NativeModule;
+    } catch {
+      // Module still not available
+      nativeModule = null;
+    }
+  });
 }
 
 /**
