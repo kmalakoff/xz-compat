@@ -1,0 +1,4 @@
+{
+  "upgrade": true,
+  "reject": ["unbzip2-stream"]
+}
