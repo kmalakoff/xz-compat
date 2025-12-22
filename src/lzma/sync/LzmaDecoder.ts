@@ -544,14 +544,16 @@ export class LzmaDecoder {
   }
 
   /**
-   * Decode LZMA data
+   * Decode LZMA data directly into caller's buffer (zero-copy)
    * @param input - Compressed input buffer
    * @param inputOffset - Offset into input buffer
    * @param outSize - Expected output size
+   * @param output - Pre-allocated output buffer to write to
+   * @param outputOffset - Offset in output buffer to start writing
    * @param solid - If true, preserve state from previous decode
-   * @returns Decompressed data
+   * @returns Number of bytes written
    */
-  decode(input: Buffer, inputOffset: number, outSize: number, solid = false): Buffer {
+  decodeToBuffer(input: Buffer, inputOffset: number, outSize: number, output: Buffer, outputOffset: number, solid = false): number {
     this.rangeDecoder.setInput(input, inputOffset);
 
     if (!solid) {
@@ -569,11 +571,11 @@ export class LzmaDecoder {
       this.outWindow.init(true);
     }
 
-    const output = allocBufferUnsafe(outSize);
-    let outPos = 0;
+    let outPos = outputOffset;
+    const outEnd = outputOffset + outSize;
     let cumPos = this.totalPos;
 
-    while (outPos < outSize) {
+    while (outPos < outEnd) {
       const posState = cumPos & this.posStateMask;
 
       if (this.rangeDecoder.decodeBit(this.isMatchDecoders, (this.state << kNumPosStatesBitsMax) + posState) === 0) {
@@ -663,6 +665,20 @@ export class LzmaDecoder {
     }
 
     this.totalPos = cumPos;
+    return outPos - outputOffset;
+  }
+
+  /**
+   * Decode LZMA data
+   * @param input - Compressed input buffer
+   * @param inputOffset - Offset into input buffer
+   * @param outSize - Expected output size
+   * @param solid - If true, preserve state from previous decode
+   * @returns Decompressed data
+   */
+  decode(input: Buffer, inputOffset: number, outSize: number, solid = false): Buffer {
+    const output = allocBufferUnsafe(outSize);
+    this.decodeToBuffer(input, inputOffset, outSize, output, 0, solid);
     return output;
   }
 }

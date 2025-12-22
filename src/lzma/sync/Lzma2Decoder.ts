@@ -232,15 +232,15 @@ export class Lzma2Decoder {
         // Determine solid mode - preserve dictionary if not resetting state or if only resetting state (not dict)
         const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
 
-        // Decode LZMA chunk
-        const chunkData = input.slice(dataOffset, dataOffset + chunk.compSize);
-        const decoded = this.lzmaDecoder.decode(chunkData, 0, chunk.uncompSize, useSolid);
-
-        // Copy to output
+        // Decode LZMA chunk - use zero-copy when we have pre-allocated buffer
         if (outputBuffer) {
-          decoded.copy(outputBuffer, outputPos);
-          outputPos += decoded.length;
+          // Zero-copy: decode directly into caller's buffer
+          const bytesWritten = this.lzmaDecoder.decodeToBuffer(input, dataOffset, chunk.uncompSize, outputBuffer, outputPos, useSolid);
+          outputPos += bytesWritten;
         } else {
+          // No pre-allocation: decode to new buffer and collect chunks
+          const chunkData = input.slice(dataOffset, dataOffset + chunk.compSize);
+          const decoded = this.lzmaDecoder.decode(chunkData, 0, chunk.uncompSize, useSolid);
           outputChunks.push(decoded);
         }
 
