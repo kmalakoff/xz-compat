@@ -373,17 +373,11 @@ export function decodeXZ(input: Buffer): Buffer {
   const native = tryLoadNative();
   if (native) {
     try {
-      return native.xz.decompressSync(input);
-    } catch (nativeErr) {
-      // Native failed - try pure JS (handles more edge cases like
-      // stream padding, concatenated streams, SHA-256 checksums)
-      try {
-        return decodeXZPure(input);
-      } catch {
-        // Both failed - throw the native error (usually more informative)
-        throw nativeErr;
-      }
-    }
+      const result = native.xz.decompressSync(input);
+      if (result.length > 0) return result;
+    } catch {}
+    // Fall back to pure JS if native fails (e.g., format mismatch)
+    // console.log('Native decodeXZ failed. Defaulting to JavaScript');
   }
   return decodeXZPure(input);
 }

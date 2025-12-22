@@ -18,7 +18,7 @@
  */
 
 import { allocBufferUnsafe, Transform } from 'extract-base-iterator';
-import { hasCompleteChunk } from '../Lzma2ChunkParser.ts';
+import { hasCompleteChunk } from '../lib/Lzma2ChunkParser.ts';
 import { LzmaDecoder } from '../sync/LzmaDecoder.ts';
 import { parseLzma2DictionarySize } from '../types.ts';
 
@@ -44,6 +44,11 @@ export function createLzma2Decoder(properties: Buffer | Uint8Array): InstanceTyp
 
   // Track current LZMA properties
   let propsSet = false;
+
+  // Store lc/lp/pb for reuse in stream decoder
+  let currentLc: number | undefined;
+  let currentLp: number | undefined;
+  let currentPb: number | undefined;
 
   // Buffer for incomplete chunk data
   let pending: Buffer | null = null;
@@ -108,14 +113,19 @@ export function createLzma2Decoder(properties: Buffer | Uint8Array): InstanceTyp
             // Apply new properties if present
             if (chunkInfo.newProps) {
               ({ lc, lp, pb } = chunkInfo.newProps);
+              // Store properties for reuse in stream decoder
+              currentLc = lc;
+              currentLp = lp;
+              currentPb = pb;
               if (!decoder.setLcLpPb(lc, lp, pb)) {
                 throw new Error(`Invalid LZMA properties: lc=${lc} lp=${lp} pb=${pb}`);
               }
               propsSet = true;
-            }
-
-            if (!propsSet) {
-              throw new Error('LZMA chunk without properties');
+            } else {
+              // No new properties, check if we already have them
+              if (!propsSet) {
+                throw new Error('LZMA chunk without properties');
+              }
             }
 
             // Reset probabilities if state reset
@@ -134,8 +144,10 @@ export function createLzma2Decoder(properties: Buffer | Uint8Array): InstanceTyp
               write: (chunk: Buffer) => this.push(chunk),
             });
             streamDecoder.setDictionarySize(dictSize);
-            // Preserve properties from main decoder
-            streamDecoder.setLcLpPb(lc, lp, pb);
+            // Set properties from current values (from first chunk or newProps)
+            if (currentLc !== undefined && currentLp !== undefined && currentPb !== undefined) {
+              streamDecoder.setLcLpPb(currentLc, currentLp, currentPb);
+            }
 
             // Use solid mode based on chunk properties
             streamDecoder.decodeWithSink(compData, 0, chunkInfo.uncompSize, useSolid);

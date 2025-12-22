@@ -6,7 +6,7 @@
  */
 
 import { allocBufferUnsafe } from 'extract-base-iterator';
-import { parseLzma2ChunkHeader } from '../Lzma2ChunkParser.ts';
+import { parseLzma2ChunkHeader } from '../lib/Lzma2ChunkParser.ts';
 import { type OutputSink, parseLzma2DictionarySize } from '../types.ts';
 import { LzmaDecoder } from './LzmaDecoder.ts';
 
@@ -122,10 +122,11 @@ export class Lzma2Decoder {
             throw new Error(`Invalid LZMA properties: lc=${lc} lp=${lp} pb=${pb}`);
           }
           this.propsSet = true;
-        }
-
-        if (!this.propsSet) {
-          throw new Error('LZMA chunk without properties');
+        } else {
+          // No new properties, check if we already have them
+          if (!this.propsSet) {
+            throw new Error('LZMA chunk without properties');
+          }
         }
 
         // Reset probabilities if state reset
@@ -218,10 +219,11 @@ export class Lzma2Decoder {
             throw new Error(`Invalid LZMA properties: lc=${lc} lp=${lp} pb=${pb}`);
           }
           this.propsSet = true;
-        }
-
-        if (!this.propsSet) {
-          throw new Error('LZMA chunk without properties');
+        } else {
+          // No new properties, check if we already have them
+          if (!this.propsSet) {
+            throw new Error('LZMA chunk without properties');
+          }
         }
 
         // Reset probabilities if state reset
