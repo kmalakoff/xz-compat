@@ -47,10 +47,11 @@ export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: numbe
     try {
       // @napi-rs/lzma expects properties embedded at the start of the data
       const selfDescribing = Buffer.concat([properties, data]);
-      return native.lzma.decompressSync(selfDescribing);
-    } catch {
-      // Fall back to pure JS if native fails (e.g., format mismatch)
-    }
+      const result = native.lzma2.decompressSync(selfDescribing);
+      if (result.length > 0) return result;
+    } catch {}
+    // Fall back to pure JS if native fails (e.g., format mismatch)
+    // console.log('Native decode7zLzma failed. Defaulting to JavaScript');
   }
 
   // Pure JS fallback - use fast path directly (no sink wrapper for buffering)
@@ -72,10 +73,12 @@ export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: num
     try {
       // @napi-rs/lzma expects properties embedded at the start of the data
       const selfDescribing = Buffer.concat([properties, data]);
-      return native.lzma2.decompressSync(selfDescribing);
-    } catch {
-      // Fall back to pure JS if native fails (e.g., format mismatch)
-    }
+      const result = native.lzma2.decompressSync(selfDescribing);
+      if (result.length > 0) return result;
+      // Empty result from native - fall through to JS decoder
+    } catch {}
+    // Fall back to pure JS if native fails (e.g., format mismatch)
+    // console.log('Native decode7zLzma2 failed. Defaulting to JavaScript');
   }
 
   // Pure JS fallback - use fast path directly (no sink wrapper for buffering)
