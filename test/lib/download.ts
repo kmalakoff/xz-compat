@@ -11,7 +11,7 @@ import { CACHE_DIR } from './constants.ts';
 
 // XZ test data repository configuration
 const XZ_CACHE_DIR = path.join(CACHE_DIR, 'xz');
-const XZ_REPO_URL = 'https://git.tukaani.org/xz-embedded.git';
+const XZ_REPO_URL = 'https://github.com/tukaani-project/xz.git';
 
 const EXPECTED_FILES = [
   'tests/test_bcj_exact_size.c',

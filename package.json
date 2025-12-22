@@ -69,6 +69,9 @@
     "ts-dev-stack": "*",
     "tsds-config": "*"
   },
+  "optionalDependencies": {
+    "@napi-rs/lzma": "^1.4.0"
+  },
   "engines": {
     "node": ">=0.8"
   }

@@ -8,6 +8,7 @@ xz-compat is a complete pure JavaScript implementation of XZ decompression with 
 
 - ✅ **XZ Format Support**: Full XZ container format decoding
 - ✅ **LZMA2 Decoder**: Complete LZMA2 decompression implementation
+- ✅ **High-Level 7z API**: Streamlined decoding for 7z files with automatic native acceleration
 - ✅ **BCJ Filters**: Branch conversion for improved compression on executables
   - x86 (32-bit)
   - ARM (32-bit)
@@ -19,7 +20,7 @@ xz-compat is a complete pure JavaScript implementation of XZ decompression with 
 - ✅ **Delta Filter**: Byte-level delta encoding
 - ✅ **Streaming & Sync**: Both streaming transforms and synchronous decoding
 - ✅ **Node 0.8+**: Works on legacy Node.js versions
-- ✅ **No Native Dependencies**: Pure JavaScript, no compilation required
+- ✅ **Native Acceleration**: Optional @napi-rs/lzma on Node.js 14+ for 3-5x performance boost
 
 ## Installation
 
@@ -27,9 +28,19 @@ xz-compat is a complete pure JavaScript implementation of XZ decompression with 
 npm install xz-compat
 ```
 
+### Optional Native Acceleration
+
+For Node.js 14+, install `@napi-rs/lzma` for automatic performance boost:
+
+```bash
+npm install @napi-rs/lzma
+```
+
+This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions or when not installed.
+
 ## Quick Start
 
-### Synchronous XZ Decompression
+### XZ Decompression (Self-describing format)
 
 ```javascript
 import { readFileSync } from 'fs';
@@ -55,7 +66,18 @@ decoder.on('data', (chunk) => {
 });
 ```
 
-### LZMA2 Decompression
+### 7z LZMA/LZMA2 Decompression (High-level API)
+
+```javascript
+import { decode7zLzma2, decode7zLzma } from 'xz-compat';
+
+// Decompress LZMA2 from a 7z file (properties extracted separately)
+const lzma2Data = readFileSync('data.7z');
+const lzma2Properties = /* from 7z folder structure */;
+const decompressed = decode7zLzma2(lzma2Data, lzma2Properties);
+```
+
+### LZMA/LZMA2 (Low-level API)
 
 ```javascript
 import { decodeLzma2 } from 'xz-compat';
@@ -90,20 +112,46 @@ const unfilteredArm = decodeBcjArm(armData);
 
 ## API Reference
 
-### XZ Decompression
+### High-Level APIs (Recommended)
 
+#### XZ Decompression
 #### `decodeXZ(buffer: Buffer): Buffer`
 Synchronously decompresses XZ format data.
+- **Automatic native acceleration**: Uses @napi-rs/lzma when available on Node 14+
+- **Self-describing**: Properties embedded in XZ format
 
 #### `createXZDecoder(): Transform`
 Creates a streaming Transform for XZ decompression.
+- Automatically uses native acceleration when available
 
-### LZMA2 Decompression
+#### 7z LZMA/LZMA2 Decompression
+#### `decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Buffer`
+Decompresses LZMA2 data from a 7z file.
+- Accepts properties separately (matching 7z format)
+- Tries native acceleration via @napi-rs/lzma automatically
+- Falls back to pure JavaScript if native unavailable
 
-#### `decodeLzma2(buffer: Buffer, properties: Buffer, unpackSize: number, sink: OutputSink): void`
+#### `decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Buffer`
+Decompresses LZMA1 data from a 7z file.
+- Accepts 5-byte properties separately
+- Tries native acceleration automatically
+
+### Low-Level APIs (Specialized Use)
+
+#### LZMA Decompression
+#### `decodeLzma(buffer: Buffer, properties: Buffer, outSize: number, sink?: OutputSink): Buffer`
+Synchronously decodes LZMA1 compressed data.
+- Low-level API for raw LZMA data
+- Requires separate properties and output size
+
+#### `createLzmaDecoder(properties: Buffer, outSize: number): Transform`
+Creates a streaming Transform for LZMA1 decompression.
+
+#### LZMA2 Decompression
+#### `decodeLzma2(buffer: Buffer, properties: Buffer, unpackSize: number, sink?: OutputSink): Buffer`
 Synchronously decodes LZMA2 compressed data.
 
-#### `createLzma2Decoder(properties: Buffer, unpackSize: number): Transform`
+#### `createLzma2Decoder(properties: Buffer, unpackSize?: number): Transform`
 Creates a streaming Transform for LZMA2 decompression.
 
 ### BCJ Filters

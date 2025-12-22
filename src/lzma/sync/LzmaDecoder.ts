@@ -669,14 +669,19 @@ export class LzmaDecoder {
 
 /**
  * Decode LZMA1 data synchronously
+ *
+ * Note: LZMA1 is a low-level format. @napi-rs/lzma expects self-describing
+ * data (like XZ), but here we accept raw LZMA with properties specified separately.
+ * Pure JS implementation is used for LZMA1.
+ *
  * @param input - Compressed data (without 5-byte properties header)
  * @param properties - 5-byte LZMA properties
  * @param outSize - Expected output size
- * @param outputSink - Optional output sink for zero-copy decoding (returns bytes written)
+ * @param outputSink - Optional output sink with write callback for streaming (returns bytes written)
  * @returns Decompressed data (or bytes written if outputSink provided)
  */
-export function decodeLzma(input: Buffer, properties: Buffer | Uint8Array, outSize: number, outputSink?: OutputSink): Buffer | number {
-  const decoder = new LzmaDecoder(outputSink);
+export function decodeLzma(input: Buffer, properties: Buffer | Uint8Array, outSize: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
+  const decoder = new LzmaDecoder(outputSink as OutputSink);
   decoder.setDecoderProperties(properties);
   if (outputSink) {
     // Zero-copy mode: write to sink during decode

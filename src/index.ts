@@ -1,15 +1,35 @@
-// XZ and LZMA decoders for external use
+/**
+ * XZ-Compat: XZ/LZMA Decompression Library
+ *
+ * Pure JavaScript implementation with optional native acceleration
+ * via @napi-rs/lzma on Node.js 14+.
+ *
+ * Works on Node.js 0.8+ with automatic performance optimization
+ * when native bindings are available.
+ */
 
-// Re-export filters for convenience
-export * from './filters/index.ts';
-export type { OutputSink } from './lzma/index.ts';
-export {
-  createLzma2Decoder,
-  createLzmaDecoder,
-  decodeLzma,
-  decodeLzma2,
-  detectLzmaFormat,
-  Lzma2Decoder,
-  LzmaDecoder,
-} from './lzma/index.ts';
+// ============================================================================
+// High-Level APIs (Recommended)
+// ============================================================================
+
+// 7z-specific decoders - accept properties separately, try native automatically
+export { decode7zLzma, decode7zLzma2 } from './sevenz.ts';
+// XZ container format - self-describing, works great with native acceleration
 export { createXZDecoder, decodeXZ } from './xz/Decoder.ts';
+
+// ============================================================================
+// Low-Level APIs (Backward Compatibility)
+// ============================================================================
+
+// Raw LZMA decoders (for specialized use cases)
+export { createLzma2Decoder, createLzmaDecoder, decodeLzma, decodeLzma2 } from './lzma/index.ts';
+
+// ============================================================================
+// Supporting APIs
+// ============================================================================
+
+// Preprocessing filters (BCJ/Delta - used by 7z-iterator)
+export * from './filters/index.ts';
+
+// Native acceleration utilities
+export { isNativeAvailable } from './native.ts';

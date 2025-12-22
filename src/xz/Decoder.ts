@@ -5,6 +5,18 @@
  * This module provides both synchronous and streaming XZ decoders.
  *
  * Pure JavaScript implementation, works on Node.js 0.8+
+ *
+ * IMPORTANT: Buffer Management Pattern
+ *
+ * When calling decodeLzma2(), use the direct return pattern:
+ *
+ * ✅ CORRECT - Fast path:
+ *   const output = decodeLzma2(data, props, size) as Buffer;
+ *
+ * ❌ WRONG - Slow path (do NOT buffer):
+ *   const chunks: Buffer[] = [];
+ *   decodeLzma2(data, props, size, { write: c => chunks.push(c) });
+ *   return Buffer.concat(chunks);  // ← Unnecessary copies!
  */
 
 import { Transform } from 'extract-base-iterator';
@@ -18,6 +30,7 @@ import { decodeBcjPpc } from '../filters/bcj/BcjPpc.ts';
 import { decodeBcjSparc } from '../filters/bcj/BcjSparc.ts';
 import { decodeDelta } from '../filters/delta/Delta.ts';
 import { decodeLzma2 } from '../lzma/index.ts';
+import { tryLoadNative } from '../native.ts';
 
 // XZ magic bytes
 const XZ_MAGIC = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00];
@@ -268,11 +281,18 @@ function parseIndex(
 
 /**
  * Decompress XZ data synchronously
+ * Uses @napi-rs/lzma if available on Node 14+, falls back to pure JS
  * Properly handles multi-block XZ files and stream padding
  * @param input - XZ compressed data
  * @returns Decompressed data
  */
 export function decodeXZ(input: Buffer): Buffer {
+  // Try native acceleration first (Node 14+ with @napi-rs/lzma installed)
+  const native = tryLoadNative();
+  if (native) {
+    return native.xz.decompressSync(input);
+  }
+
   // Verify XZ magic
   if (input.length < 12 || !bufferEquals(input, 0, XZ_MAGIC)) {
     throw new Error('Invalid XZ magic bytes');
@@ -334,16 +354,8 @@ export function decodeXZ(input: Buffer): Buffer {
     // LZMA2 data includes a 0x00 end marker which must NOT be stripped.
     const compressedData = input.slice(dataStart, dataEnd);
 
-    // Decompress this block with LZMA2
-    const blockChunks: Buffer[] = [];
-    decodeLzma2(compressedData, blockInfo.lzma2Props, record.uncompressedSize, {
-      write: (chunk: Buffer) => {
-        blockChunks.push(chunk);
-      },
-    });
-
-    // Concatenate LZMA2 output
-    let blockOutput = Buffer.concat(blockChunks) as Buffer;
+    // Decompress this block with LZMA2 (fast path, no buffering)
+    let blockOutput = decodeLzma2(compressedData, blockInfo.lzma2Props, record.uncompressedSize) as Buffer;
 
     // Apply preprocessing filters in reverse order (BCJ/Delta applied after LZMA2)
     // Filters are stored in order they were applied during compression,

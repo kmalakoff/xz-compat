@@ -9,6 +9,8 @@ describe('exports .cjs', () => {
     assert.ok(XZ.createLzma2Decoder);
     assert.ok(XZ.decodeLzma);
     assert.ok(XZ.decodeLzma2);
-    assert.ok(XZ.detectLzmaFormat);
+    assert.ok(XZ.decode7zLzma);
+    assert.ok(XZ.decode7zLzma2);
+    assert.ok(XZ.isNativeAvailable);
   });
 });

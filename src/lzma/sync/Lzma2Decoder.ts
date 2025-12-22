@@ -261,11 +261,11 @@ export class Lzma2Decoder {
  * @param input - LZMA2 compressed data
  * @param properties - 1-byte properties (dictionary size)
  * @param unpackSize - Expected output size (optional, autodetects if not provided)
- * @param outputSink - Optional output sink for zero-copy decoding (returns bytes written)
+ * @param outputSink - Optional output sink with write callback for streaming (returns bytes written)
  * @returns Decompressed data (or bytes written if outputSink provided)
  */
-export function decodeLzma2(input: Buffer, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: OutputSink): Buffer | number {
-  const decoder = new Lzma2Decoder(properties, outputSink);
+export function decodeLzma2(input: Buffer, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
+  const decoder = new Lzma2Decoder(properties, outputSink as OutputSink);
   if (outputSink) {
     // Zero-copy mode: write to sink during decode
     return decoder.decodeWithSink(input);

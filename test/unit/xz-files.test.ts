@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import url from 'url';
 import { decodeXZ } from 'xz-compat';
+import { ensureXZTestData } from '../lib/download.ts';
 
 const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : url.fileURLToPath(import.meta.url));
 const TEST_FILES_DIR = path.join(__dirname, '..', '..', '.cache', 'xz', 'tests', 'files');
@@ -22,11 +23,23 @@ function testFilesExist(): boolean {
 }
 
 describe('XZ decoder - official test files', () => {
-  before(function () {
-    if (!testFilesExist()) {
-      console.log('    Skipping official XZ test files - not found in .cache/xz/tests/files');
-      this.skip();
-    }
+  before((done) => {
+    // Download/clone XZ test data - this MUST succeed
+    ensureXZTestData((err) => {
+      if (err) {
+        console.log('    ERROR: Failed to download XZ test data:', err.message);
+        return done(new Error(`Failed to download XZ test data: ${err.message}`));
+      }
+
+      // Verify test files actually exist after download
+      if (!testFilesExist()) {
+        console.log('    ERROR: XZ test files not found after download');
+        return done(new Error('XZ test files not found in .cache/xz/tests/files after ensureXZTestData()'));
+      }
+
+      console.log('    XZ test files ready');
+      done();
+    });
   });
 
   describe('Good files - empty streams', () => {
