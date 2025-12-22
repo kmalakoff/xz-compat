@@ -372,6 +372,63 @@ export function decodeXZ(input: Buffer): Buffer {
 }
 
 /**
+ * Parse XZ stream to get block information (without decompressing)
+ * This allows streaming decompression by processing blocks one at a time.
+ */
+function parseXZIndex(input: Buffer): Array<{
+  compressedPos: number;
+  compressedDataSize: number;
+  uncompressedSize: number;
+  checkSize: number;
+}> {
+  // Stream header validation
+  if (input.length < 12) {
+    throw new Error('XZ file too small');
+  }
+
+  // Stream magic bytes (0xFD, '7zXZ', 0x00)
+  if (input[0] !== 0xfd || input[1] !== 0x37 || input[2] !== 0x7a || input[3] !== 0x58 || input[4] !== 0x5a || input[5] !== 0x00) {
+    throw new Error('Invalid XZ magic bytes');
+  }
+
+  // Stream flags at offset 6-7
+  const checkType = input[7] & 0x0f;
+
+  // Check sizes based on check type
+  const checkSizes: { [key: number]: number } = {
+    0: 0, // None
+    1: 4, // CRC32
+    4: 8, // CRC64
+    10: 32, // SHA-256
+  };
+  const checkSize = checkSizes[checkType] ?? 0;
+
+  // Find footer by skipping stream padding
+  let footerEnd = input.length;
+  while (footerEnd > 12 && input[footerEnd - 1] === 0x00) {
+    footerEnd--;
+  }
+  while (footerEnd % 4 !== 0 && footerEnd > 12) {
+    footerEnd++;
+  }
+
+  // Verify footer magic
+  if (!bufferEquals(input, footerEnd - 2, XZ_FOOTER_MAGIC)) {
+    throw new Error('Invalid XZ footer magic');
+  }
+
+  // Get backward size
+  const backwardSize = (input.readUInt32LE(footerEnd - 8) + 1) * 4;
+  const indexStart = footerEnd - 12 - backwardSize;
+
+  // Parse Index to get block information
+  return parseIndex(input, indexStart, checkSize).map((record) => ({
+    ...record,
+    checkSize,
+  }));
+}
+
+/**
  * Create an XZ decompression Transform stream
  * @returns Transform stream that decompresses XZ data
  */
@@ -387,8 +444,34 @@ export function createXZDecoder(): TransformType {
     flush(callback: (error?: Error | null) => void) {
       try {
         const input = Buffer.concat(chunks);
-        const output = decodeXZ(input);
-        this.push(output);
+
+        // Stream decode each block instead of buffering all output
+        const blockRecords = parseXZIndex(input);
+
+        for (let i = 0; i < blockRecords.length; i++) {
+          const record = blockRecords[i];
+          const recordStart = record.compressedPos;
+
+          // Parse block header
+          const blockInfo = parseBlockHeader(input, recordStart, blockRecords[i].checkSize);
+
+          // Extract compressed data for this block
+          const dataStart = recordStart + blockInfo.headerSize;
+          const dataEnd = dataStart + record.compressedDataSize;
+          const compressedData = input.slice(dataStart, dataEnd);
+
+          // Decompress this block
+          let blockOutput = decodeLzma2(compressedData, blockInfo.lzma2Props, record.uncompressedSize) as Buffer;
+
+          // Apply preprocessing filters in reverse order
+          for (let j = blockInfo.filters.length - 1; j >= 0; j--) {
+            blockOutput = applyFilter(blockOutput, blockInfo.filters[j]) as Buffer;
+          }
+
+          // Push block output immediately instead of buffering
+          this.push(blockOutput);
+        }
+
         callback();
       } catch (err) {
         callback(err as Error);

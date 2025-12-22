@@ -70,7 +70,7 @@
     "tsds-config": "*"
   },
   "optionalDependencies": {
-    "@napi-rs/lzma": "^1.4.0"
+    "@napi-rs/lzma": "^1.4.5"
   },
   "engines": {
     "node": ">=0.8"

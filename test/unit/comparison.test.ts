@@ -151,9 +151,10 @@ function compareExtractions(nativeDir: string, xzCompatDir: string, skipModeChec
           }
 
           // Check mode (permissions), but allow for minor differences due to umask
-          const modeDiff = Math.abs(statNative.mode - statXzCompat.mode);
+          // Use Number() to handle BigInt mode values in older Node.js versions on Windows
+          const modeDiff = Math.abs(Number(statNative.mode) - Number(statXzCompat.mode));
           if (!skipModeCheck && modeDiff > 0o22) {
-            differences.push(`Mode mismatch for ${filePath}: native=${statNative.mode.toString(8)}, xz-compat=${statXzCompat.mode.toString(8)}`);
+            differences.push(`Mode mismatch for ${filePath}: native=${Number(statNative.mode).toString(8)}, xz-compat=${Number(statXzCompat.mode).toString(8)}`);
           }
         }
       }
