@@ -18,16 +18,16 @@
 <li>✅ <strong>Delta Filter</strong>: Byte-level delta encoding</li>
 <li>✅ <strong>Streaming &amp; Sync</strong>: Both streaming transforms and synchronous decoding</li>
 <li>✅ <strong>Node 0.8+</strong>: Works on legacy Node.js versions</li>
-<li>✅ <strong>Native Acceleration</strong>: Optional @napi-rs/lzma on Node.js 14+ for 3-5x performance boost</li>
+<li>✅ <strong>Native Acceleration</strong>: Optional lzma-native on Node.js 10+ for 3-5x performance boost</li>
 </ul>
 <h2 id="installation" class="tsd-anchor-link">Installation<a href="#installation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">xz-compat</span>
 </code><button type="button">Copy</button></pre>
 
-<h3 id="optional-native-acceleration" class="tsd-anchor-link">Optional Native Acceleration<a href="#optional-native-acceleration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>For Node.js 14+, install <code>@napi-rs/lzma</code> for automatic performance boost:</p>
-<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">@napi-rs/lzma</span>
+<h3 id="optional-native-acceleration" class="tsd-anchor-link">Optional Native Acceleration<a href="#optional-native-acceleration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>For Node.js 10+, install <code>lzma-native</code> for automatic performance boost:</p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">lzma-native</span>
 </code><button type="button">Copy</button></pre>
 
-<p>This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions or when not installed.</p>
+<p>This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions, when installation fails, or when disabled via <code>LZMA_NATIVE_DISABLE=1</code>.</p>
 <h2 id="quick-start" class="tsd-anchor-link">Quick Start<a href="#quick-start" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="xz-decompression-self-describing-format" class="tsd-anchor-link">XZ Decompression (Self-describing format)<a href="#xz-decompression-self-describing-format" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="javascript"><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-4">readFileSync</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-2">&#39;fs&#39;</span><span class="hl-1">;</span><br/><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-4">decodeXZ</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-2">&#39;xz-compat&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">compressedData</span><span class="hl-1"> = </span><span class="hl-0">readFileSync</span><span class="hl-1">(</span><span class="hl-2">&#39;file.xz&#39;</span><span class="hl-1">);</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">decompressedData</span><span class="hl-1"> = </span><span class="hl-0">decodeXZ</span><span class="hl-1">(</span><span class="hl-4">compressedData</span><span class="hl-1">);</span><br/><span class="hl-4">console</span><span class="hl-1">.</span><span class="hl-0">log</span><span class="hl-1">(</span><span class="hl-2">&#39;Decompressed:&#39;</span><span class="hl-1">, </span><span class="hl-4">decompressedData</span><span class="hl-1">.</span><span class="hl-0">toString</span><span class="hl-1">());</span>
 </code><button type="button">Copy</button></pre>
 
@@ -45,7 +45,7 @@
 
 <h2 id="api-reference" class="tsd-anchor-link">API Reference<a href="#api-reference" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="high-level-apis-recommended" class="tsd-anchor-link">High-Level APIs (Recommended)<a href="#high-level-apis-recommended" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><h4 id="xz-decompression" class="tsd-anchor-link">XZ Decompression<a href="#xz-decompression" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><h4 id="" class="tsd-anchor-link"><code>decodeXZ(buffer: Buffer): Buffer</code></h4><p>Synchronously decompresses XZ format data.</p>
 <ul>
-<li><strong>Automatic native acceleration</strong>: Uses @napi-rs/lzma when available on Node 14+</li>
+<li><strong>Automatic native acceleration</strong>: Uses lzma-native when available on Node 10+</li>
 <li><strong>Self-describing</strong>: Properties embedded in XZ format</li>
 </ul>
 <h4 id="-1" class="tsd-anchor-link"><code>createXZDecoder(): Transform</code><a href="#-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><p>Creates a streaming Transform for XZ decompression.</p>
@@ -55,7 +55,7 @@
 <h4 id="7z-lzmalzma2-decompression" class="tsd-anchor-link">7z LZMA/LZMA2 Decompression<a href="#7z-lzmalzma2-decompression" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><h4 id="-2" class="tsd-anchor-link"><code>decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Buffer</code><a href="#-2" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><p>Decompresses LZMA2 data from a 7z file.</p>
 <ul>
 <li>Accepts properties separately (matching 7z format)</li>
-<li>Tries native acceleration via @napi-rs/lzma automatically</li>
+<li>Tries native acceleration via lzma-native automatically</li>
 <li>Falls back to pure JavaScript if native unavailable</li>
 </ul>
 <h4 id="-3" class="tsd-anchor-link"><code>decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Buffer</code><a href="#-3" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><p>Decompresses LZMA1 data from a 7z file.</p>
