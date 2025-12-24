@@ -2,7 +2,7 @@
  * High-Level 7z-Specific Decoders
  *
  * These functions accept properties separately (matching 7z format structure)
- * and internally wrap them with the data to use @napi-rs/lzma when available.
+ * and execute either the native lzma-native path or the pure JS fallback.
  *
  * This provides automatic native acceleration for 7z files while maintaining
  * the API that 7z-iterator expects.
@@ -31,56 +31,65 @@
 import { decodeLzma2 } from './lzma/sync/Lzma2Decoder.ts';
 import { decodeLzma } from './lzma/sync/LzmaDecoder.ts';
 import { tryLoadNative } from './native.ts';
+import { type DecodeCallback, runDecode, runSync } from './utils/runDecode.ts';
 
+/** Callback invoked when an async 7z decode completes */
+export type SevenZDecodeCallback = DecodeCallback<Buffer>;
+
+export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback: SevenZDecodeCallback): void;
+export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Promise<Buffer>;
 /**
  * Decode LZMA-compressed data from a 7z file
- *
- * @param data - LZMA compressed data (without properties)
- * @param properties - 5-byte LZMA properties (lc/lp/pb + dictionary size)
- * @param unpackSize - Expected output size
- * @returns Decompressed data
  */
-export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Buffer {
-  // Try native acceleration first
-  const native = tryLoadNative();
-  if (native) {
-    try {
-      // @napi-rs/lzma expects properties embedded at the start of the data
-      const selfDescribing = Buffer.concat([properties, data]);
-      const result = native.lzma2.decompressSync(selfDescribing);
-      if (result.length > 0) return result;
-    } catch {}
-    // Fall back to pure JS if native fails (e.g., format mismatch)
-    // console.log('Native decode7zLzma failed. Defaulting to JavaScript');
-  }
+export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
+  return runDecode((done) => {
+    const fallback = () => runSync(() => decodeLzma(data, properties, unpackSize) as Buffer, done);
+    const native = tryLoadNative();
 
-  // Pure JS fallback - use fast path directly (no sink wrapper for buffering)
-  return decodeLzma(data, properties, unpackSize) as Buffer;
+    if (native && native.lzma) {
+      try {
+        const promise = native.lzma(data, properties, unpackSize);
+        if (promise && typeof promise.then === 'function') {
+          promise.then(
+            (value) => done(null, value),
+            () => fallback()
+          );
+          return;
+        }
+      } catch {
+        // fall through to fallback
+      }
+    }
+
+    fallback();
+  }, callback);
 }
 
 /**
  * Decode LZMA2-compressed data from a 7z file
- *
- * @param data - LZMA2 compressed data (without properties)
- * @param properties - 1-byte LZMA2 properties (dictionary size)
- * @param unpackSize - Expected output size (optional)
- * @returns Decompressed data
  */
-export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Buffer {
-  // Try native acceleration first
-  const native = tryLoadNative();
-  if (native) {
-    try {
-      // @napi-rs/lzma expects properties embedded at the start of the data
-      const selfDescribing = Buffer.concat([properties, data]);
-      const result = native.lzma2.decompressSync(selfDescribing);
-      if (result.length > 0) return result;
-      // Empty result from native - fall through to JS decoder
-    } catch {}
-    // Fall back to pure JS if native fails (e.g., format mismatch)
-    // console.log('Native decode7zLzma2 failed. Defaulting to JavaScript');
-  }
+export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize: number | undefined, callback: SevenZDecodeCallback): void;
+export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Promise<Buffer>;
+export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
+  return runDecode((done) => {
+    const fallback = () => runSync(() => decodeLzma2(data, properties, unpackSize) as Buffer, done);
+    const native = tryLoadNative();
 
-  // Pure JS fallback - use fast path directly (no sink wrapper for buffering)
-  return decodeLzma2(data, properties, unpackSize) as Buffer;
+    if (native && native.lzma2) {
+      try {
+        const promise = native.lzma2(data, properties, unpackSize);
+        if (promise && typeof promise.then === 'function') {
+          promise.then(
+            (value) => done(null, value),
+            () => fallback()
+          );
+          return;
+        }
+      } catch {
+        // fall through to fallback
+      }
+    }
+
+    fallback();
+  }, callback);
 }

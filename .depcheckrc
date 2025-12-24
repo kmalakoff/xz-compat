@@ -1,1 +1,1 @@
-ignores: ["node-version-use", "ts-dev-stack", "xz-compat", "install-module-linked"]
+ignores: ["node-version-use", "ts-dev-stack", "xz-compat", "install-module-linked", "lzma-native"]
