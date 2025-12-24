@@ -6,25 +6,35 @@ import assert from 'assert';
 import { createXZDecoder, decodeXZ } from 'xz-compat';
 import { bufferAlloc, bufferFrom } from '../lib/compat.ts';
 
+function expectDecodeFailure(data: Buffer, done: Mocha.Done, matcher?: RegExp): void {
+  decodeXZ(data, (err) => {
+    if (!err) return done(new Error('Expected decodeXZ to fail'));
+    if (matcher && !matcher.test(err.message)) {
+      return done(new Error(`Expected "${err.message}" to match ${matcher}`));
+    }
+    done();
+  });
+}
+
 describe('XZ decoder', () => {
   describe('decodeXZ', () => {
-    it('should reject invalid magic bytes', () => {
+    it('should reject invalid magic bytes', (done) => {
       const invalidData = bufferFrom('not an xz file');
-      assert.throws(() => decodeXZ(invalidData), Error, 'Invalid XZ magic bytes');
+      expectDecodeFailure(invalidData, done);
     });
 
-    it('should reject too small files', () => {
+    it('should reject too small files', (done) => {
       const smallData = bufferFrom([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-      assert.throws(() => decodeXZ(smallData), Error, 'XZ file too small');
+      expectDecodeFailure(smallData, done);
     });
 
-    it('should reject invalid block header size', () => {
+    it('should reject invalid block header size', (done) => {
       // XZ magic + size byte of 0 (index indicator)
       const invalidData = bufferFrom([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]);
-      assert.throws(() => decodeXZ(invalidData), Error, 'Invalid block header size');
+      expectDecodeFailure(invalidData, done);
     });
 
-    it('should reject invalid footer magic', () => {
+    it('should reject invalid footer magic', (done) => {
       const invalidData = bufferAlloc(20, 0);
       // Set XZ magic
       invalidData[0] = 0xfd;
@@ -36,14 +46,14 @@ describe('XZ decoder', () => {
       // Set invalid footer magic
       invalidData[18] = 0xff;
       invalidData[19] = 0xff;
-      assert.throws(() => decodeXZ(invalidData), Error, 'Invalid XZ footer magic');
+      expectDecodeFailure(invalidData, done, /Invalid XZ footer magic/);
     });
 
-    it('should reject unsupported filters', () => {
+    it('should reject unsupported filters', (done) => {
       // This is a minimal test - in reality we'd need a real XZ file
       // But we can verify the error is thrown
       const minimalXZ = bufferFrom([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x01, 0x59, 0x5a, 0x00, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-      assert.throws(() => decodeXZ(minimalXZ), Error);
+      expectDecodeFailure(minimalXZ, done);
     });
   });
 

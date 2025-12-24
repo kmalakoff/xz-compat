@@ -686,9 +686,9 @@ export class LzmaDecoder {
 /**
  * Decode LZMA1 data synchronously
  *
- * Note: LZMA1 is a low-level format. @napi-rs/lzma expects self-describing
- * data (like XZ), but here we accept raw LZMA with properties specified separately.
- * Pure JS implementation is used for LZMA1.
+ * Note: LZMA1 is a low-level format. Native bindings (lzma-native) expect
+ * self-describing data (like XZ), but here we accept raw LZMA with properties
+ * specified separately. Pure JS implementation is used for LZMA1.
  *
  * @param input - Compressed data (without 5-byte properties header)
  * @param properties - 5-byte LZMA properties
