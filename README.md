@@ -20,7 +20,7 @@ xz-compat is a complete pure JavaScript implementation of XZ decompression with 
 - ✅ **Delta Filter**: Byte-level delta encoding
 - ✅ **Streaming & Sync**: Both streaming transforms and synchronous decoding
 - ✅ **Node 0.8+**: Works on legacy Node.js versions
-- ✅ **Native Acceleration**: Optional @napi-rs/lzma on Node.js 14+ for 3-5x performance boost
+- ✅ **Native Acceleration**: Optional lzma-native on Node.js 10+ for 3-5x performance boost
 
 ## Installation
 
@@ -30,13 +30,13 @@ npm install xz-compat
 
 ### Optional Native Acceleration
 
-For Node.js 14+, install `@napi-rs/lzma` for automatic performance boost:
+For Node.js 10+, install `lzma-native` for automatic performance boost:
 
 ```bash
-npm install @napi-rs/lzma
+npm install lzma-native
 ```
 
-This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions or when not installed.
+This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions, when installation fails, or when disabled via `LZMA_NATIVE_DISABLE=1`.
 
 ## Quick Start
 
@@ -117,7 +117,7 @@ const unfilteredArm = decodeBcjArm(armData);
 #### XZ Decompression
 #### `decodeXZ(buffer: Buffer): Buffer`
 Synchronously decompresses XZ format data.
-- **Automatic native acceleration**: Uses @napi-rs/lzma when available on Node 14+
+- **Automatic native acceleration**: Uses lzma-native when available on Node 10+
 - **Self-describing**: Properties embedded in XZ format
 
 #### `createXZDecoder(): Transform`
@@ -128,7 +128,7 @@ Creates a streaming Transform for XZ decompression.
 #### `decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Buffer`
 Decompresses LZMA2 data from a 7z file.
 - Accepts properties separately (matching 7z format)
-- Tries native acceleration via @napi-rs/lzma automatically
+- Tries native acceleration via lzma-native automatically
 - Falls back to pure JavaScript if native unavailable
 
 #### `decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Buffer`

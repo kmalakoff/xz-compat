@@ -31,6 +31,7 @@ import { decodeBcjSparc } from '../filters/bcj/BcjSparc.ts';
 import { decodeDelta } from '../filters/delta/Delta.ts';
 import { decodeLzma2 } from '../lzma/index.ts';
 import { tryLoadNative } from '../native.ts';
+import { type DecodeCallback, runDecode, runSync, tryNativeDecode } from '../utils/runDecode.ts';
 
 // XZ magic bytes
 const XZ_MAGIC = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00];
@@ -361,32 +362,33 @@ function decodeXZPure(input: Buffer): Buffer {
   return Buffer.concat(outputChunks);
 }
 
+/** Callback invoked when an async decode completes */
+export type XzDecodeCallback = DecodeCallback<Buffer>;
+
+export function decodeXZ(input: Buffer, callback: XzDecodeCallback): void;
+export function decodeXZ(input: Buffer): Promise<Buffer>;
 /**
- * Decompress XZ data synchronously
- * Uses @napi-rs/lzma if available on Node 14+, falls back to pure JS
- * Properly handles multi-block XZ files, stream padding, and concatenated streams
- * @param input - XZ compressed data
- * @returns Decompressed data
+ * Decompress XZ data. With a callback the result is provided asynchronously;
+ * otherwise a Promise resolves with the decoded buffer.
  */
-export function decodeXZ(input: Buffer): Buffer {
-  // Try native acceleration first (Node 14+ with @napi-rs/lzma installed)
-  const native = tryLoadNative();
-  if (native) {
-    try {
-      const result = native.xz.decompressSync(input);
-      if (result.length > 0) return result;
-    } catch {}
-    // Fall back to pure JS if native fails (e.g., format mismatch)
-    // console.log('Native decodeXZ failed. Defaulting to JavaScript');
-  }
-  return decodeXZPure(input);
+export function decodeXZ(input: Buffer, callback?: XzDecodeCallback): Promise<Buffer> | void {
+  return runDecode((done) => {
+    const fallback = () => runSync(() => decodeXZPure(input), done);
+    const native = tryLoadNative();
+
+    if (native && native.xz && tryNativeDecode(native.xz, input, done, fallback)) {
+      return;
+    }
+
+    fallback();
+  }, callback);
 }
 
 /**
  * Parse XZ stream to get block information (without decompressing)
  * This allows streaming decompression by processing blocks one at a time.
  */
-function parseXZIndex(input: Buffer): Array<{
+function _parseXZIndex(input: Buffer): Array<{
   compressedPos: number;
   compressedDataSize: number;
   uncompressedSize: number;
@@ -453,40 +455,17 @@ export function createXZDecoder(): TransformType {
     },
 
     flush(callback: (error?: Error | null) => void) {
-      try {
-        const input = Buffer.concat(chunks);
-
-        // Stream decode each block instead of buffering all output
-        const blockRecords = parseXZIndex(input);
-
-        for (let i = 0; i < blockRecords.length; i++) {
-          const record = blockRecords[i];
-          const recordStart = record.compressedPos;
-
-          // Parse block header
-          const blockInfo = parseBlockHeader(input, recordStart, blockRecords[i].checkSize);
-
-          // Extract compressed data for this block
-          const dataStart = recordStart + blockInfo.headerSize;
-          const dataEnd = dataStart + record.compressedDataSize;
-          const compressedData = input.slice(dataStart, dataEnd);
-
-          // Decompress this block
-          let blockOutput = decodeLzma2(compressedData, blockInfo.lzma2Props, record.uncompressedSize) as Buffer;
-
-          // Apply preprocessing filters in reverse order
-          for (let j = blockInfo.filters.length - 1; j >= 0; j--) {
-            blockOutput = applyFilter(blockOutput, blockInfo.filters[j]) as Buffer;
-          }
-
-          // Push block output immediately instead of buffering
-          this.push(blockOutput);
+      const input = Buffer.concat(chunks);
+      decodeXZ(input, (err, output) => {
+        if (err) {
+          callback(err);
+          return;
         }
-
+        if (output) {
+          this.push(output);
+        }
         callback();
-      } catch (err) {
-        callback(err as Error);
-      }
+      });
     },
   });
 }
