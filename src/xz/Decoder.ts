@@ -19,7 +19,7 @@
  *   return Buffer.concat(chunks);  // ← Unnecessary copies!
  */
 
-import { Transform } from 'extract-base-iterator';
+import { type BufferLike, BufferList, Transform } from 'extract-base-iterator';
 import type { Transform as TransformType } from 'stream';
 import { decodeBcj } from '../filters/bcj/Bcj.ts';
 import { decodeBcjArm } from '../filters/bcj/BcjArm.ts';
@@ -31,7 +31,7 @@ import { decodeBcjSparc } from '../filters/bcj/BcjSparc.ts';
 import { decodeDelta } from '../filters/delta/Delta.ts';
 import { decodeLzma2 } from '../lzma/index.ts';
 import { tryLoadNative } from '../native.ts';
-import { type DecodeCallback, runDecode, runSync, tryNativeDecode } from '../utils/runDecode.ts';
+import type { DecodeCallback } from '../sevenz.ts';
 
 // XZ magic bytes
 const XZ_MAGIC = [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00];
@@ -54,15 +54,37 @@ interface FilterInfo {
   props: Buffer;
 }
 
+// Re-export BufferLike for public API
+export type { BufferLike } from 'extract-base-iterator';
+
 /**
- * Simple buffer comparison
+ * Read a byte from Buffer or BufferList
  */
-function bufferEquals(buf: Buffer, offset: number, expected: number[]): boolean {
+function readByte(buf: BufferLike, offset: number): number {
+  return Buffer.isBuffer(buf) ? buf[offset] : buf.readByte(offset);
+}
+
+/**
+ * Read UInt32LE from Buffer or BufferList (returns null if out of bounds)
+ */
+function readUInt32LE(buf: BufferLike, offset: number): number | null {
+  if (Buffer.isBuffer(buf)) {
+    if (offset < 0 || offset + 4 > buf.length) return null;
+    return buf.readUInt32LE(offset);
+  }
+  return buf.readUInt32LEAt(offset);
+}
+
+/**
+ * Compare buffer contents at offset with expected byte sequence
+ * Works with both Buffer and BufferList
+ */
+function bufferEquals(buf: BufferLike, offset: number, expected: number[]): boolean {
   if (offset + expected.length > buf.length) {
     return false;
   }
   for (let i = 0; i < expected.length; i++) {
-    if (buf[offset + i] !== expected[i]) {
+    if (readByte(buf, offset + i) !== expected[i]) {
       return false;
     }
   }
@@ -71,9 +93,9 @@ function bufferEquals(buf: Buffer, offset: number, expected: number[]): boolean 
 
 /**
  * Decode variable-length integer (XZ multibyte encoding)
- * Returns number, but limits to 32-bit to work on Node 0.8+
+ * Works with both Buffer and BufferList
  */
-function decodeMultibyte(buf: Buffer, offset: number): { value: number; bytesRead: number } {
+function decodeMultibyte(buf: BufferLike, offset: number): { value: number; bytesRead: number } {
   let value = 0;
   let i = 0;
   let byte: number;
@@ -81,11 +103,10 @@ function decodeMultibyte(buf: Buffer, offset: number): { value: number; bytesRea
     if (offset + i >= buf.length) {
       throw new Error('Truncated multibyte integer');
     }
-    byte = buf[offset + i];
+    byte = readByte(buf, offset + i);
     value |= (byte & 0x7f) << (i * 7);
     i++;
     if (i > 4) {
-      // Reduced to prevent overflow on Node 0.8
       throw new Error('Multibyte integer too large');
     }
   } while (byte & 0x80);
@@ -205,13 +226,10 @@ function parseBlockHeader(
 
 /**
  * Parse XZ Index to get block positions
- *
- * XZ Index stores "Unpadded Size" for each block which equals:
- * Block Header Size + Compressed Data Size + Check Size
- * (does NOT include padding to 4-byte boundary)
+ * Works with both Buffer and BufferList
  */
 function parseIndex(
-  input: Buffer,
+  input: BufferLike,
   indexStart: number,
   checkSize: number
 ): Array<{
@@ -219,16 +237,38 @@ function parseIndex(
   compressedDataSize: number;
   uncompressedSize: number;
 }> {
+  // One-time binding for buffer access (avoids repeated Buffer.isBuffer checks)
+  const getByte = Buffer.isBuffer(input) ? (offset: number) => input[offset] : (offset: number) => input.readByte(offset);
+
+  // Local multibyte decoder using bound getByte
+  const decodeMultibyteLocal = (offset: number): { value: number; bytesRead: number } => {
+    let value = 0;
+    let i = 0;
+    let byte: number;
+    do {
+      if (offset + i >= input.length) {
+        throw new Error('Truncated multibyte integer');
+      }
+      byte = getByte(offset + i);
+      value |= (byte & 0x7f) << (i * 7);
+      i++;
+      if (i > 4) {
+        throw new Error('Multibyte integer too large');
+      }
+    } while (byte & 0x80);
+    return { value, bytesRead: i };
+  };
+
   let offset = indexStart;
 
   // Index indicator (0x00)
-  if (input[offset] !== 0x00) {
+  if (getByte(offset) !== 0x00) {
     throw new Error('Invalid index indicator');
   }
   offset++;
 
   // Number of records
-  const countResult = decodeMultibyte(input, offset);
+  const countResult = decodeMultibyteLocal(offset);
   const recordCount = countResult.value;
   offset += countResult.bytesRead;
 
@@ -242,11 +282,11 @@ function parseIndex(
   // Parse each record
   for (let i = 0; i < recordCount; i++) {
     // Unpadded Size (header + compressed data + check)
-    const unpaddedResult = decodeMultibyte(input, offset);
+    const unpaddedResult = decodeMultibyteLocal(offset);
     offset += unpaddedResult.bytesRead;
 
     // Uncompressed size
-    const uncompressedResult = decodeMultibyte(input, offset);
+    const uncompressedResult = decodeMultibyteLocal(offset);
     offset += uncompressedResult.bytesRead;
 
     records.push({
@@ -265,11 +305,10 @@ function parseIndex(
     record.compressedPos = currentPos;
 
     // Get block header size from the actual data
-    const headerSizeRaw = input[currentPos];
+    const headerSizeRaw = getByte(currentPos);
     const headerSize = (headerSizeRaw + 1) * 4;
 
     // Calculate compressed data size from unpadded size
-    // unpaddedSize = headerSize + compressedDataSize + checkSize
     record.compressedDataSize = record.unpaddedSize - headerSize - checkSize;
 
     // Move to next block: unpaddedSize + padding to 4-byte boundary
@@ -282,15 +321,16 @@ function parseIndex(
 
 /**
  * Pure JS XZ decompression (handles all XZ spec features)
+ * Returns BufferList for memory efficiency with large files.
  */
-function decodeXZPure(input: Buffer): Buffer {
+function decodeXZPure(input: Buffer): Buffer | BufferList {
   // Verify XZ magic
   if (input.length < 12 || !bufferEquals(input, 0, XZ_MAGIC)) {
     throw new Error('Invalid XZ magic bytes');
   }
 
   // Stream flags at offset 6-7
-  const checkType = input[7] & 0x0f;
+  const checkType = readByte(input, 7) & 0x0f;
 
   // Check sizes based on check type
   const checkSizes: { [key: number]: number } = {
@@ -304,7 +344,7 @@ function decodeXZPure(input: Buffer): Buffer {
   // Find footer by skipping stream padding (null bytes at end before footer)
   // Stream padding must be multiple of 4 bytes
   let footerEnd = input.length;
-  while (footerEnd > 12 && input[footerEnd - 1] === 0x00) {
+  while (footerEnd > 12 && readByte(input, footerEnd - 1) === 0x00) {
     footerEnd--;
   }
   // Align to 4-byte boundary (stream padding rules)
@@ -318,15 +358,46 @@ function decodeXZPure(input: Buffer): Buffer {
   }
 
   // Get backward size (tells us where index starts) - at footerEnd - 8
-  const backwardSize = (input.readUInt32LE(footerEnd - 8) + 1) * 4;
+  const backwardSizeLE = readUInt32LE(input, footerEnd - 8);
+  if (backwardSizeLE === null) {
+    throw new Error('Invalid backward size');
+  }
+  const backwardSize = (backwardSizeLE + 1) * 4;
   const indexStart = footerEnd - 12 - backwardSize;
 
   // Parse Index to get block information
   const blockRecords = parseIndex(input, indexStart, checkSize);
 
-  // Decompress each block
-  const outputChunks: Buffer[] = [];
-  let _totalOutputSize = 0;
+  // Calculate total uncompressed size for multi-block decision
+  let totalUncompressedSize = 0;
+  for (let i = 0; i < blockRecords.length; i++) {
+    totalUncompressedSize += blockRecords[i].uncompressedSize;
+  }
+
+  // Small multi-block files: use Buffer.concat directly (avoids BufferList overhead)
+  // Threshold of 64KB: below this, the overhead of linked list nodes isn't worth it
+  const BUFFERLIST_THRESHOLD = 64 * 1024; // 64KB
+
+  // Single block OR small multi-block: return Buffer directly
+  if (blockRecords.length === 1 || totalUncompressedSize < BUFFERLIST_THRESHOLD) {
+    const record = blockRecords[0];
+    const recordStart = record.compressedPos;
+    const blockInfo = parseBlockHeader(input, recordStart, checkSize);
+    const dataStart = recordStart + blockInfo.headerSize;
+    const dataEnd = dataStart + record.compressedDataSize;
+    const compressedData = input.slice(dataStart, dataEnd);
+
+    let blockOutput = decodeLzma2(compressedData, blockInfo.lzma2Props, record.uncompressedSize) as Buffer;
+
+    for (let j = blockInfo.filters.length - 1; j >= 0; j--) {
+      blockOutput = applyFilter(blockOutput, blockInfo.filters[j]) as Buffer;
+    }
+
+    return blockOutput;
+  }
+
+  // Multi-block (large): use BufferList to avoid large contiguous allocation
+  const output = new BufferList();
 
   for (let i = 0; i < blockRecords.length; i++) {
     const record = blockRecords[i];
@@ -337,7 +408,6 @@ function decodeXZPure(input: Buffer): Buffer {
 
     // Extract compressed data for this block
     const dataStart = recordStart + blockInfo.headerSize;
-    // compressedDataSize is calculated from the Index's Unpadded Size minus header and check
     const dataEnd = dataStart + record.compressedDataSize;
 
     // Note: XZ blocks have padding AFTER the check field to align to 4 bytes,
@@ -355,117 +425,208 @@ function decodeXZPure(input: Buffer): Buffer {
       blockOutput = applyFilter(blockOutput, blockInfo.filters[j]) as Buffer;
     }
 
-    outputChunks.push(blockOutput);
-    _totalOutputSize += blockOutput.length;
+    // Append block to BufferList
+    output.append(blockOutput);
   }
 
-  return Buffer.concat(outputChunks);
+  return output;
 }
 
 /** Callback invoked when an async decode completes */
-export type XzDecodeCallback = DecodeCallback<Buffer>;
+export type XzDecodeCallback = DecodeCallback<BufferLike>;
 
-export function decodeXZ(input: Buffer, callback: XzDecodeCallback): void;
-export function decodeXZ(input: Buffer): Promise<Buffer>;
 /**
  * Decompress XZ data. With a callback the result is provided asynchronously;
- * otherwise a Promise resolves with the decoded buffer.
+ * otherwise a Promise resolves with the decoded data.
+ *
+ * Returns Buffer for single-block files (most small files).
+ * Returns BufferList for multi-block files (avoids large contiguous allocation).
  */
-export function decodeXZ(input: Buffer, callback?: XzDecodeCallback): Promise<Buffer> | void {
-  return runDecode((done) => {
-    const fallback = () => runSync(() => decodeXZPure(input), done);
+export function decodeXZ(input: Buffer, callback: XzDecodeCallback): void;
+export function decodeXZ(input: Buffer): Promise<BufferLike>;
+export function decodeXZ(input: Buffer, callback?: XzDecodeCallback): Promise<BufferLike> | void {
+  const worker = (cb: XzDecodeCallback) => {
+    const fallback = () => {
+      try {
+        cb(null, decodeXZPure(input));
+      } catch (err) {
+        cb(err as Error);
+      }
+    };
+
     const native = tryLoadNative();
-
-    if (native && native.xz && tryNativeDecode(native.xz, input, done, fallback)) {
-      return;
+    if (native?.xz?.decompress) {
+      try {
+        const promise = native.xz.decompress(input);
+        if (promise && typeof promise.then === 'function') {
+          promise.then((value) => cb(null, value as BufferLike), fallback);
+          return;
+        }
+      } catch {
+        // fall through to fallback
+      }
     }
-
     fallback();
-  }, callback);
-}
-
-/**
- * Parse XZ stream to get block information (without decompressing)
- * This allows streaming decompression by processing blocks one at a time.
- */
-function _parseXZIndex(input: Buffer): Array<{
-  compressedPos: number;
-  compressedDataSize: number;
-  uncompressedSize: number;
-  checkSize: number;
-}> {
-  // Stream header validation
-  if (input.length < 12) {
-    throw new Error('XZ file too small');
-  }
-
-  // Stream magic bytes (0xFD, '7zXZ', 0x00)
-  if (input[0] !== 0xfd || input[1] !== 0x37 || input[2] !== 0x7a || input[3] !== 0x58 || input[4] !== 0x5a || input[5] !== 0x00) {
-    throw new Error('Invalid XZ magic bytes');
-  }
-
-  // Stream flags at offset 6-7
-  const checkType = input[7] & 0x0f;
-
-  // Check sizes based on check type
-  const checkSizes: { [key: number]: number } = {
-    0: 0, // None
-    1: 4, // CRC32
-    4: 8, // CRC64
-    10: 32, // SHA-256
   };
-  const checkSize = checkSizes[checkType] ?? 0;
 
-  // Find footer by skipping stream padding
-  let footerEnd = input.length;
-  while (footerEnd > 12 && input[footerEnd - 1] === 0x00) {
-    footerEnd--;
-  }
-  while (footerEnd % 4 !== 0 && footerEnd > 12) {
-    footerEnd++;
-  }
-
-  // Verify footer magic
-  if (!bufferEquals(input, footerEnd - 2, XZ_FOOTER_MAGIC)) {
-    throw new Error('Invalid XZ footer magic');
-  }
-
-  // Get backward size
-  const backwardSize = (input.readUInt32LE(footerEnd - 8) + 1) * 4;
-  const indexStart = footerEnd - 12 - backwardSize;
-
-  // Parse Index to get block information
-  return parseIndex(input, indexStart, checkSize).map((record) => ({
-    ...record,
-    checkSize,
-  }));
+  if (typeof callback === 'function') return worker(callback);
+  return new Promise((resolve, reject) => worker((err, value) => (err ? reject(err) : resolve(value as BufferLike))));
 }
+
+// Callback-based LZMA2 decoder type (for Node 0.8+ compatibility - no promises)
+type Lzma2DecodeCallback = (err: Error | null, result?: Buffer) => void;
+type Lzma2Decoder = (data: Buffer, props: Buffer, size: number, callback: Lzma2DecodeCallback) => void;
 
 /**
  * Create an XZ decompression Transform stream
  * @returns Transform stream that decompresses XZ data
+ *
+ * Uses native lzma-native bindings when available for better performance.
+ * Falls back to pure JS implementation on older Node versions or when native is unavailable.
  */
 export function createXZDecoder(): TransformType {
-  const chunks: Buffer[] = [];
+  const bufferList = new BufferList();
+  // Cache native module lookup (only done once)
+  const native = tryLoadNative();
+
+  // Choose decoder: native (async via callback) or pure JS (sync wrapped in callback)
+  const decodeLzma2Block: Lzma2Decoder = native?.lzma2
+    ? (data, props, size, cb) => {
+        native.lzma2?.(data, props, size).then(
+          (result) => cb(null, result),
+          (err) => cb(err)
+        );
+      }
+    : (data, props, size, cb) => {
+        try {
+          cb(null, decodeLzma2(data, props, size) as Buffer);
+        } catch (err) {
+          cb(err as Error);
+        }
+      };
 
   return new Transform({
     transform(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void) {
-      chunks.push(chunk);
+      bufferList.append(chunk);
       callback();
     },
 
     flush(callback: (error?: Error | null) => void) {
-      const input = Buffer.concat(chunks);
-      decodeXZ(input, (err, output) => {
+      const input: BufferLike = bufferList;
+
+      // One-time binding for buffer access (avoids repeated Buffer.isBuffer checks)
+      const getByte = Buffer.isBuffer(input) ? (offset: number) => input[offset] : (offset: number) => input.readByte(offset);
+
+      const getUInt32LE = Buffer.isBuffer(input) ? (offset: number) => (offset < 0 || offset + 4 > input.length ? null : input.readUInt32LE(offset)) : (offset: number) => input.readUInt32LEAt(offset);
+
+      const equals = (offset: number, expected: number[]): boolean => {
+        if (offset + expected.length > input.length) return false;
+        for (let i = 0; i < expected.length; i++) {
+          if (getByte(offset + i) !== expected[i]) return false;
+        }
+        return true;
+      };
+
+      // Verify XZ magic (need at least 12 bytes)
+      if (input.length < 12 || !equals(0, XZ_MAGIC)) {
+        callback(new Error('Invalid XZ magic bytes'));
+        return;
+      }
+
+      // Stream flags at offset 6-7
+      const checkType = getByte(7) & 0x0f;
+
+      // Check sizes based on check type
+      const checkSizes: { [key: number]: number } = {
+        0: 0, // None
+        1: 4, // CRC32
+        4: 8, // CRC64
+        10: 32, // SHA-256
+      };
+      const checkSize = checkSizes[checkType] ?? 0;
+
+      // Find footer by skipping stream padding (null bytes at end before footer)
+      let footerEnd = input.length;
+      while (footerEnd > 12 && getByte(footerEnd - 1) === 0x00) {
+        footerEnd--;
+      }
+      // Align to 4-byte boundary
+      while (footerEnd % 4 !== 0 && footerEnd > 12) {
+        footerEnd++;
+      }
+
+      // Verify footer magic (at footerEnd - 2)
+      if (!equals(footerEnd - 2, XZ_FOOTER_MAGIC)) {
+        callback(new Error('Invalid XZ footer magic'));
+        return;
+      }
+
+      // Get backward size (at footerEnd - 8)
+      const backwardSizeLE = getUInt32LE(footerEnd - 8);
+      if (backwardSizeLE === null) {
+        callback(new Error('Invalid backward size'));
+        return;
+      }
+      const backwardSize = (backwardSizeLE + 1) * 4;
+      const indexStart = footerEnd - 12 - backwardSize;
+
+      // Parse Index to get block information
+      const blockRecords = parseIndex(input, indexStart, checkSize);
+
+      // Decompress blocks sequentially (native is async)
+      let blockIndex = 0;
+      const pushBlock = (err: Error | null) => {
         if (err) {
           callback(err);
           return;
         }
-        if (output) {
-          this.push(output);
+
+        if (blockIndex >= blockRecords.length) {
+          // All blocks processed - purge input BufferList to free memory
+          if (!Buffer.isBuffer(input)) input.clear();
+          callback(null);
+          return;
         }
-        callback();
-      });
+
+        const record = blockRecords[blockIndex++];
+        const recordStart = record.compressedPos;
+
+        // Parse block header (need to get the header bytes)
+        // Read header size byte first
+        const headerSizeRaw = getByte(recordStart);
+        const headerSize = (headerSizeRaw + 1) * 4;
+
+        // Read the full header to parse filters
+        const headerData = input.slice(recordStart, recordStart + headerSize);
+        const blockInfo = parseBlockHeader(headerData, 0, checkSize);
+
+        // Extract compressed data for this block
+        const dataStart = recordStart + headerSize;
+        const dataEnd = dataStart + record.compressedDataSize;
+        const compressedData = input.slice(dataStart, dataEnd);
+
+        // Decompress this block (native or pure JS, callback-based)
+        decodeLzma2Block(compressedData, blockInfo.lzma2Props, record.uncompressedSize, (decodeErr, blockOutput) => {
+          if (decodeErr || !blockOutput) {
+            pushBlock(decodeErr || new Error('Decode returned no data'));
+            return;
+          }
+
+          // Apply preprocessing filters in reverse order
+          for (let j = blockInfo.filters.length - 1; j >= 0; j--) {
+            blockOutput = applyFilter(blockOutput, blockInfo.filters[j]) as Buffer;
+          }
+
+          // Push the block output immediately (streaming)
+          this.push(blockOutput);
+
+          // Continue with next block
+          pushBlock(null);
+        });
+      };
+
+      // Start processing blocks
+      pushBlock(null);
     },
   });
 }
