@@ -19,7 +19,7 @@
  *   return Buffer.concat(chunks);  // ← Unnecessary copies!
  */
 
-import { type BufferLike, BufferList, Transform } from 'extract-base-iterator';
+import { allocBuffer, type BufferLike, BufferList, Transform } from 'extract-base-iterator';
 import type { Transform as TransformType } from 'stream';
 import { decodeBcj } from '../filters/bcj/Bcj.ts';
 import { decodeBcjArm } from '../filters/bcj/BcjArm.ts';
@@ -367,6 +367,9 @@ function decodeXZPure(input: Buffer): Buffer | BufferList {
 
   // Parse Index to get block information
   const blockRecords = parseIndex(input, indexStart, checkSize);
+
+  // Handle empty files (no blocks) - return empty buffer
+  if (blockRecords.length === 0) return allocBuffer(0);
 
   // Calculate total uncompressed size for multi-block decision
   let totalUncompressedSize = 0;
