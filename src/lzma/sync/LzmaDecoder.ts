@@ -5,7 +5,7 @@
  * All operations are synchronous.
  */
 
-import { allocBufferUnsafe, bufferFrom } from 'extract-base-iterator';
+import { allocBufferUnsafe, type BufferLike, bufferFrom } from 'extract-base-iterator';
 import {
   getLenToPosState,
   initBitModels,
@@ -424,13 +424,13 @@ export class LzmaDecoder {
 
   /**
    * Decode LZMA data with streaming output (no buffer accumulation)
-   * @param input - Compressed input buffer
+   * @param input - Compressed input buffer or BufferList
    * @param inputOffset - Offset into input buffer
    * @param outSize - Expected output size
    * @param solid - If true, preserve state from previous decode
    * @returns Number of bytes written to sink
    */
-  decodeWithSink(input: Buffer, inputOffset: number, outSize: number, solid = false): number {
+  decodeWithSink(input: BufferLike, inputOffset: number, outSize: number, solid = false): number {
     this.rangeDecoder.setInput(input, inputOffset);
 
     if (!solid) {
@@ -545,7 +545,7 @@ export class LzmaDecoder {
 
   /**
    * Decode LZMA data directly into caller's buffer (zero-copy)
-   * @param input - Compressed input buffer
+   * @param input - Compressed input buffer or BufferList
    * @param inputOffset - Offset into input buffer
    * @param outSize - Expected output size
    * @param output - Pre-allocated output buffer to write to
@@ -553,7 +553,7 @@ export class LzmaDecoder {
    * @param solid - If true, preserve state from previous decode
    * @returns Number of bytes written
    */
-  decodeToBuffer(input: Buffer, inputOffset: number, outSize: number, output: Buffer, outputOffset: number, solid = false): number {
+  decodeToBuffer(input: BufferLike, inputOffset: number, outSize: number, output: Buffer, outputOffset: number, solid = false): number {
     this.rangeDecoder.setInput(input, inputOffset);
 
     if (!solid) {
@@ -670,13 +670,13 @@ export class LzmaDecoder {
 
   /**
    * Decode LZMA data
-   * @param input - Compressed input buffer
+   * @param input - Compressed input buffer or BufferList
    * @param inputOffset - Offset into input buffer
    * @param outSize - Expected output size
    * @param solid - If true, preserve state from previous decode
    * @returns Decompressed data
    */
-  decode(input: Buffer, inputOffset: number, outSize: number, solid = false): Buffer {
+  decode(input: BufferLike, inputOffset: number, outSize: number, solid = false): Buffer {
     const output = allocBufferUnsafe(outSize);
     this.decodeToBuffer(input, inputOffset, outSize, output, 0, solid);
     return output;
@@ -690,13 +690,13 @@ export class LzmaDecoder {
  * self-describing data (like XZ), but here we accept raw LZMA with properties
  * specified separately. Pure JS implementation is used for LZMA1.
  *
- * @param input - Compressed data (without 5-byte properties header)
+ * @param input - Compressed data (without 5-byte properties header) or BufferList
  * @param properties - 5-byte LZMA properties
  * @param outSize - Expected output size
  * @param outputSink - Optional output sink with write callback for streaming (returns bytes written)
  * @returns Decompressed data (or bytes written if outputSink provided)
  */
-export function decodeLzma(input: Buffer, properties: Buffer | Uint8Array, outSize: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
+export function decodeLzma(input: BufferLike, properties: Buffer | Uint8Array, outSize: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
   const decoder = new LzmaDecoder(outputSink as OutputSink);
   decoder.setDecoderProperties(properties);
   if (outputSink) {

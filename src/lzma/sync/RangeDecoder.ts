@@ -5,30 +5,31 @@
  * All operations are synchronous - for streaming use the async version.
  */
 
-import { allocBuffer } from 'extract-base-iterator';
+import type { BufferLike } from 'extract-base-iterator';
 
 /**
  * Range decoder for synchronous buffer-based LZMA decoding
  */
 export class RangeDecoder {
-  private input: Buffer;
   private pos: number;
   private code: number;
   private range: number;
+  private getByte: (offset: number) => number;
 
   constructor() {
-    this.input = allocBuffer(0); // Replaced by setInput() before use
     this.pos = 0;
     this.code = 0;
     this.range = 0;
+    this.getByte = () => 0;
   }
 
   /**
    * Set input buffer and initialize decoder state
    */
-  setInput(input: Buffer, offset = 0): void {
-    this.input = input;
+  setInput(input: BufferLike, offset = 0): void {
     this.pos = offset;
+    // One-time binding for byte access (avoids repeated Buffer.isBuffer checks)
+    this.getByte = Buffer.isBuffer(input) ? (o) => input[o] : (o) => input.readByte(o);
     this.init();
   }
 
@@ -44,7 +45,7 @@ export class RangeDecoder {
 
     // Read 4 bytes into code
     for (let i = 0; i < 4; i++) {
-      this.code = (this.code << 8) | this.input[this.pos++];
+      this.code = (this.code << 8) | this.getByte(this.pos++);
     }
   }
 
@@ -60,7 +61,7 @@ export class RangeDecoder {
    */
   private normalize(): void {
     if ((this.range & 0xff000000) === 0) {
-      this.code = (this.code << 8) | this.input[this.pos++];
+      this.code = (this.code << 8) | this.getByte(this.pos++);
       this.range <<= 8;
     }
   }
