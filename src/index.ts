@@ -15,7 +15,7 @@
 // 7z-specific decoders - accept properties separately, try native automatically
 export { decode7zLzma, decode7zLzma2, type SevenZDecodeCallback } from './sevenz.ts';
 // XZ container format - self-describing, works great with native acceleration
-export { createXZDecoder, decodeXZ, type XzDecodeCallback } from './xz/Decoder.ts';
+export { type BufferLike, createXZDecoder, decodeXZ, type XzDecodeCallback } from './xz/Decoder.ts';
 
 // ============================================================================
 // Low-Level APIs (Backward Compatibility)
@@ -35,4 +35,4 @@ export * from './filters/index.ts';
 export { isNativeAvailable } from './native.ts';
 
 // Callback type used by async decoders
-export type { DecodeCallback } from './utils/runDecode.ts';
+export type { DecodeCallback } from './sevenz.ts';
