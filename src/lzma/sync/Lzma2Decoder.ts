@@ -5,7 +5,7 @@
  * Decodes LZMA2 data from a buffer.
  */
 
-import { allocBufferUnsafe } from 'extract-base-iterator';
+import { allocBufferUnsafe, type BufferLike } from 'extract-base-iterator';
 import { parseLzma2ChunkHeader } from '../lib/Lzma2ChunkParser.ts';
 import { type OutputSink, parseLzma2DictionarySize } from '../types.ts';
 import { LzmaDecoder } from './LzmaDecoder.ts';
@@ -71,15 +71,17 @@ export class Lzma2Decoder {
 
   /**
    * Decode LZMA2 data with streaming output
-   * @param input - LZMA2 compressed data
+   * @param input - LZMA2 compressed data (Buffer or BufferList)
    * @returns Total number of bytes written to sink
    */
-  decodeWithSink(input: Buffer): number {
+  decodeWithSink(input: BufferLike): number {
+    // Convert BufferList to Buffer for low-level parsing
+    const buf = Buffer.isBuffer(input) ? input : input.toBuffer();
     let totalBytes = 0;
     let offset = 0;
 
-    while (offset < input.length) {
-      const result = parseLzma2ChunkHeader(input, offset);
+    while (offset < buf.length) {
+      const result = parseLzma2ChunkHeader(buf, offset);
 
       if (!result.success) {
         throw new Error('Truncated LZMA2 chunk header');
@@ -93,7 +95,7 @@ export class Lzma2Decoder {
 
       // Validate we have enough data for the chunk
       const dataSize = chunk.type === 'uncompressed' ? chunk.uncompSize : chunk.compSize;
-      if (offset + chunk.headerSize + dataSize > input.length) {
+      if (offset + chunk.headerSize + dataSize > buf.length) {
         throw new Error(`Truncated LZMA2 ${chunk.type} data`);
       }
 
@@ -105,7 +107,7 @@ export class Lzma2Decoder {
       const dataOffset = offset + chunk.headerSize;
 
       if (chunk.type === 'uncompressed') {
-        const uncompData = input.slice(dataOffset, dataOffset + chunk.uncompSize);
+        const uncompData = buf.slice(dataOffset, dataOffset + chunk.uncompSize);
 
         // Feed uncompressed data to dictionary so subsequent LZMA chunks can reference it
         this.lzmaDecoder.feedUncompressed(uncompData);
@@ -138,7 +140,7 @@ export class Lzma2Decoder {
         const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
 
         // Decode LZMA chunk directly to sink
-        totalBytes += this.lzmaDecoder.decodeWithSink(input, dataOffset, chunk.uncompSize, useSolid);
+        totalBytes += this.lzmaDecoder.decodeWithSink(buf, dataOffset, chunk.uncompSize, useSolid);
 
         offset = dataOffset + chunk.compSize;
       }
@@ -152,11 +154,14 @@ export class Lzma2Decoder {
 
   /**
    * Decode LZMA2 data
-   * @param input - LZMA2 compressed data
+   * @param input - LZMA2 compressed data (Buffer or BufferList)
    * @param unpackSize - Expected output size (optional, for pre-allocation)
    * @returns Decompressed data
    */
-  decode(input: Buffer, unpackSize?: number): Buffer {
+  decode(input: BufferLike, unpackSize?: number): Buffer {
+    // Convert BufferList to Buffer for low-level parsing
+    const buf = Buffer.isBuffer(input) ? input : input.toBuffer();
+
     // Pre-allocate output buffer if size is known
     let outputBuffer: Buffer | null = null;
     let outputPos = 0;
@@ -168,8 +173,8 @@ export class Lzma2Decoder {
 
     let offset = 0;
 
-    while (offset < input.length) {
-      const result = parseLzma2ChunkHeader(input, offset);
+    while (offset < buf.length) {
+      const result = parseLzma2ChunkHeader(buf, offset);
 
       if (!result.success) {
         throw new Error('Truncated LZMA2 chunk header');
@@ -183,7 +188,7 @@ export class Lzma2Decoder {
 
       // Validate we have enough data for the chunk
       const dataSize = chunk.type === 'uncompressed' ? chunk.uncompSize : chunk.compSize;
-      if (offset + chunk.headerSize + dataSize > input.length) {
+      if (offset + chunk.headerSize + dataSize > buf.length) {
         throw new Error(`Truncated LZMA2 ${chunk.type} data`);
       }
 
@@ -195,7 +200,7 @@ export class Lzma2Decoder {
       const dataOffset = offset + chunk.headerSize;
 
       if (chunk.type === 'uncompressed') {
-        const uncompData = input.slice(dataOffset, dataOffset + chunk.uncompSize);
+        const uncompData = buf.slice(dataOffset, dataOffset + chunk.uncompSize);
 
         // Copy to output
         if (outputBuffer) {
@@ -237,11 +242,11 @@ export class Lzma2Decoder {
         // Decode LZMA chunk - use zero-copy when we have pre-allocated buffer
         if (outputBuffer) {
           // Zero-copy: decode directly into caller's buffer
-          const bytesWritten = this.lzmaDecoder.decodeToBuffer(input, dataOffset, chunk.uncompSize, outputBuffer, outputPos, useSolid);
+          const bytesWritten = this.lzmaDecoder.decodeToBuffer(buf, dataOffset, chunk.uncompSize, outputBuffer, outputPos, useSolid);
           outputPos += bytesWritten;
         } else {
           // No pre-allocation: decode to new buffer and collect chunks
-          const chunkData = input.slice(dataOffset, dataOffset + chunk.compSize);
+          const chunkData = buf.slice(dataOffset, dataOffset + chunk.compSize);
           const decoded = this.lzmaDecoder.decode(chunkData, 0, chunk.uncompSize, useSolid);
           outputChunks.push(decoded);
         }
@@ -260,13 +265,13 @@ export class Lzma2Decoder {
 
 /**
  * Decode LZMA2 data synchronously
- * @param input - LZMA2 compressed data
+ * @param input - LZMA2 compressed data (Buffer or BufferList)
  * @param properties - 1-byte properties (dictionary size)
  * @param unpackSize - Expected output size (optional, autodetects if not provided)
  * @param outputSink - Optional output sink with write callback for streaming (returns bytes written)
  * @returns Decompressed data (or bytes written if outputSink provided)
  */
-export function decodeLzma2(input: Buffer, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
+export function decodeLzma2(input: BufferLike, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
   const decoder = new Lzma2Decoder(properties, outputSink as OutputSink);
   if (outputSink) {
     // Zero-copy mode: write to sink during decode

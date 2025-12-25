@@ -31,10 +31,14 @@
 import { decodeLzma2 } from './lzma/sync/Lzma2Decoder.ts';
 import { decodeLzma } from './lzma/sync/LzmaDecoder.ts';
 import { tryLoadNative } from './native.ts';
-import { type DecodeCallback, runDecode, runSync } from './utils/runDecode.ts';
+
+/** Callback for async decode operations: (error, result) => void */
+export type DecodeCallback<T = Buffer> = (error: Error | null, result?: T) => void;
 
 /** Callback invoked when an async 7z decode completes */
 export type SevenZDecodeCallback = DecodeCallback<Buffer>;
+
+const schedule = typeof setImmediate === 'function' ? setImmediate : (fn: () => void) => process.nextTick(fn);
 
 export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback: SevenZDecodeCallback): void;
 export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Promise<Buffer>;
@@ -42,27 +46,34 @@ export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: numbe
  * Decode LZMA-compressed data from a 7z file
  */
 export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
-  return runDecode((done) => {
-    const fallback = () => runSync(() => decodeLzma(data, properties, unpackSize) as Buffer, done);
-    const native = tryLoadNative();
+  const worker = (cb: SevenZDecodeCallback) => {
+    const fallback = () => {
+      schedule(() => {
+        try {
+          cb(null, decodeLzma(data, properties, unpackSize) as Buffer);
+        } catch (err) {
+          cb(err as Error);
+        }
+      });
+    };
 
-    if (native && native.lzma) {
+    const native = tryLoadNative();
+    if (native?.lzma) {
       try {
         const promise = native.lzma(data, properties, unpackSize);
         if (promise && typeof promise.then === 'function') {
-          promise.then(
-            (value) => done(null, value),
-            () => fallback()
-          );
+          promise.then((value) => cb(null, value), fallback);
           return;
         }
       } catch {
         // fall through to fallback
       }
     }
-
     fallback();
-  }, callback);
+  };
+
+  if (typeof callback === 'function') return worker(callback);
+  return new Promise((resolve, reject) => worker((err, value) => (err ? reject(err) : resolve(value as Buffer))));
 }
 
 /**
@@ -71,25 +82,32 @@ export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: numbe
 export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize: number | undefined, callback: SevenZDecodeCallback): void;
 export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Promise<Buffer>;
 export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
-  return runDecode((done) => {
-    const fallback = () => runSync(() => decodeLzma2(data, properties, unpackSize) as Buffer, done);
-    const native = tryLoadNative();
+  const worker = (cb: SevenZDecodeCallback) => {
+    const fallback = () => {
+      schedule(() => {
+        try {
+          cb(null, decodeLzma2(data, properties, unpackSize) as Buffer);
+        } catch (err) {
+          cb(err as Error);
+        }
+      });
+    };
 
-    if (native && native.lzma2) {
+    const native = tryLoadNative();
+    if (native?.lzma2) {
       try {
         const promise = native.lzma2(data, properties, unpackSize);
         if (promise && typeof promise.then === 'function') {
-          promise.then(
-            (value) => done(null, value),
-            () => fallback()
-          );
+          promise.then((value) => cb(null, value), fallback);
           return;
         }
       } catch {
         // fall through to fallback
       }
     }
-
     fallback();
-  }, callback);
+  };
+
+  if (typeof callback === 'function') return worker(callback);
+  return new Promise((resolve, reject) => worker((err, value) => (err ? reject(err) : resolve(value as Buffer))));
 }
