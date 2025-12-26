@@ -14,6 +14,8 @@
  * 0xE0-0xFF    = LZMA chunk, reset dictionary + state + new properties
  */
 
+import type { BufferLike } from 'extract-base-iterator';
+
 /**
  * LZMA properties extracted from chunk header
  */
@@ -49,18 +51,33 @@ export interface Lzma2Chunk {
 export type ParseResult = { success: true; chunk: Lzma2Chunk } | { success: false; needBytes: number };
 
 /**
+ * Read a byte from BufferLike at offset
+ */
+function readByte(input: BufferLike, offset: number): number {
+  return Buffer.isBuffer(input) ? input[offset] : input.readByte(offset);
+}
+
+/**
+ * Get length of BufferLike
+ */
+function getLength(input: BufferLike): number {
+  return Buffer.isBuffer(input) ? input.length : input.length;
+}
+
+/**
  * Parse an LZMA2 chunk header
  *
- * @param input - Input buffer
+ * @param input - Input buffer or BufferList
  * @param offset - Offset to start parsing
  * @returns Parsed chunk info or number of bytes needed
  */
-export function parseLzma2ChunkHeader(input: Buffer, offset: number): ParseResult {
-  if (offset >= input.length) {
+export function parseLzma2ChunkHeader(input: BufferLike, offset: number): ParseResult {
+  const len = getLength(input);
+  if (offset >= len) {
     return { success: false, needBytes: 1 };
   }
 
-  const control = input[offset];
+  const control = readByte(input, offset);
 
   // End of stream
   if (control === 0x00) {
@@ -81,11 +98,11 @@ export function parseLzma2ChunkHeader(input: Buffer, offset: number): ParseResul
   // Uncompressed chunk
   if (control === 0x01 || control === 0x02) {
     // Need 3 bytes: control + 2 size bytes
-    if (offset + 3 > input.length) {
-      return { success: false, needBytes: 3 - (input.length - offset) };
+    if (offset + 3 > len) {
+      return { success: false, needBytes: 3 - (len - offset) };
     }
 
-    const uncompSize = ((input[offset + 1] << 8) | input[offset + 2]) + 1;
+    const uncompSize = ((readByte(input, offset + 1) << 8) | readByte(input, offset + 2)) + 1;
 
     return {
       success: true,
@@ -106,19 +123,19 @@ export function parseLzma2ChunkHeader(input: Buffer, offset: number): ParseResul
     const hasNewProps = control >= 0xc0;
     const minHeaderSize = hasNewProps ? 6 : 5; // control + 2 uncomp + 2 comp + (1 props)
 
-    if (offset + minHeaderSize > input.length) {
-      return { success: false, needBytes: minHeaderSize - (input.length - offset) };
+    if (offset + minHeaderSize > len) {
+      return { success: false, needBytes: minHeaderSize - (len - offset) };
     }
 
     // Parse sizes
     const uncompHigh = control & 0x1f;
-    const uncompSize = ((uncompHigh << 16) | (input[offset + 1] << 8) | input[offset + 2]) + 1;
-    const compSize = ((input[offset + 3] << 8) | input[offset + 4]) + 1;
+    const uncompSize = ((uncompHigh << 16) | (readByte(input, offset + 1) << 8) | readByte(input, offset + 2)) + 1;
+    const compSize = ((readByte(input, offset + 3) << 8) | readByte(input, offset + 4)) + 1;
 
     // Parse properties if present
     let newProps: LzmaChunkProps | null = null;
     if (hasNewProps) {
-      const propsByte = input[offset + 5];
+      const propsByte = readByte(input, offset + 5);
       const lc = propsByte % 9;
       const remainder = ~~(propsByte / 9);
       const lp = remainder % 5;
@@ -150,7 +167,7 @@ export type CompleteChunkResult = { success: true; chunk: Lzma2Chunk; totalSize:
 /**
  * Check if we have enough data for the complete chunk (header + data)
  */
-export function hasCompleteChunk(input: Buffer, offset: number): CompleteChunkResult {
+export function hasCompleteChunk(input: BufferLike, offset: number): CompleteChunkResult {
   const result = parseLzma2ChunkHeader(input, offset);
 
   if (result.success === false) {
@@ -160,9 +177,10 @@ export function hasCompleteChunk(input: Buffer, offset: number): CompleteChunkRe
   const { chunk } = result;
   const dataSize = chunk.type === 'uncompressed' ? chunk.uncompSize : chunk.compSize;
   const totalSize = chunk.headerSize + dataSize;
+  const len = getLength(input);
 
-  if (offset + totalSize > input.length) {
-    return { success: false, needBytes: totalSize - (input.length - offset) };
+  if (offset + totalSize > len) {
+    return { success: false, needBytes: totalSize - (len - offset) };
   }
 
   return { success: true, chunk, totalSize };

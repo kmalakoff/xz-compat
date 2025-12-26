@@ -28,6 +28,7 @@
  * array defeats this optimization by creating unnecessary intermediate copies.
  */
 
+import type { BufferLike } from 'extract-base-iterator';
 import { decodeLzma2 } from './lzma/sync/Lzma2Decoder.ts';
 import { decodeLzma } from './lzma/sync/LzmaDecoder.ts';
 import { tryLoadNative } from './native.ts';
@@ -40,12 +41,12 @@ export type SevenZDecodeCallback = DecodeCallback<Buffer>;
 
 const schedule = typeof setImmediate === 'function' ? setImmediate : (fn: () => void) => process.nextTick(fn);
 
-export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback: SevenZDecodeCallback): void;
-export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Promise<Buffer>;
+export function decode7zLzma(data: BufferLike, properties: Buffer, unpackSize: number, callback: SevenZDecodeCallback): void;
+export function decode7zLzma(data: BufferLike, properties: Buffer, unpackSize: number): Promise<Buffer>;
 /**
  * Decode LZMA-compressed data from a 7z file
  */
-export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
+export function decode7zLzma(data: BufferLike, properties: Buffer, unpackSize: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
   const worker = (cb: SevenZDecodeCallback) => {
     const fallback = () => {
       schedule(() => {
@@ -60,7 +61,9 @@ export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: numbe
     const native = tryLoadNative();
     if (native?.lzma) {
       try {
-        const promise = native.lzma(data, properties, unpackSize);
+        // Native lzma-native expects Buffer, convert if needed
+        const buf = Buffer.isBuffer(data) ? data : data.toBuffer();
+        const promise = native.lzma(buf, properties, unpackSize);
         if (promise && typeof promise.then === 'function') {
           promise.then((value) => cb(null, value), fallback);
           return;
@@ -79,9 +82,9 @@ export function decode7zLzma(data: Buffer, properties: Buffer, unpackSize: numbe
 /**
  * Decode LZMA2-compressed data from a 7z file
  */
-export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize: number | undefined, callback: SevenZDecodeCallback): void;
-export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Promise<Buffer>;
-export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
+export function decode7zLzma2(data: BufferLike, properties: Buffer, unpackSize: number | undefined, callback: SevenZDecodeCallback): void;
+export function decode7zLzma2(data: BufferLike, properties: Buffer, unpackSize?: number): Promise<Buffer>;
+export function decode7zLzma2(data: BufferLike, properties: Buffer, unpackSize?: number, callback?: SevenZDecodeCallback): Promise<Buffer> | void {
   const worker = (cb: SevenZDecodeCallback) => {
     const fallback = () => {
       schedule(() => {
@@ -96,7 +99,9 @@ export function decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: num
     const native = tryLoadNative();
     if (native?.lzma2) {
       try {
-        const promise = native.lzma2(data, properties, unpackSize);
+        // Native lzma-native expects Buffer, convert if needed
+        const buf = Buffer.isBuffer(data) ? data : data.toBuffer();
+        const promise = native.lzma2(buf, properties, unpackSize);
         if (promise && typeof promise.then === 'function') {
           promise.then((value) => cb(null, value), fallback);
           return;

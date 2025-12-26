@@ -2,13 +2,28 @@
  * Synchronous LZMA2 Decoder
  *
  * LZMA2 is a container format that wraps LZMA chunks with framing.
- * Decodes LZMA2 data from a buffer.
+ * Decodes LZMA2 data from a buffer or BufferList.
  */
 
-import { allocBufferUnsafe, type BufferLike } from 'extract-base-iterator';
+import { allocBufferUnsafe, type BufferLike, bufferConcat, bufferFrom } from 'extract-base-iterator';
 import { parseLzma2ChunkHeader } from '../lib/Lzma2ChunkParser.ts';
 import { type OutputSink, parseLzma2DictionarySize } from '../types.ts';
 import { LzmaDecoder } from './LzmaDecoder.ts';
+
+/**
+ * Read multiple bytes from BufferLike into a Buffer
+ */
+function readBytes(input: BufferLike, offset: number, length: number): Buffer {
+  if (Buffer.isBuffer(input)) {
+    return input.slice(offset, offset + length);
+  }
+  // For BufferList, create a new Buffer with the data
+  const buf = bufferFrom(new Array(length));
+  for (let i = 0; i < length; i++) {
+    buf[i] = input.readByte(offset + i);
+  }
+  return buf;
+}
 
 /**
  * Synchronous LZMA2 decoder
@@ -16,7 +31,6 @@ import { LzmaDecoder } from './LzmaDecoder.ts';
 export class Lzma2Decoder {
   private lzmaDecoder: LzmaDecoder;
   private dictionarySize: number;
-  private propsSet: boolean;
 
   constructor(properties: Buffer | Uint8Array, outputSink?: OutputSink) {
     if (!properties || properties.length < 1) {
@@ -26,7 +40,6 @@ export class Lzma2Decoder {
     this.dictionarySize = parseLzma2DictionarySize(properties[0]);
     this.lzmaDecoder = new LzmaDecoder(outputSink);
     this.lzmaDecoder.setDictionarySize(this.dictionarySize);
-    this.propsSet = false;
   }
 
   /**
@@ -75,13 +88,11 @@ export class Lzma2Decoder {
    * @returns Total number of bytes written to sink
    */
   decodeWithSink(input: BufferLike): number {
-    // Convert BufferList to Buffer for low-level parsing
-    const buf = Buffer.isBuffer(input) ? input : input.toBuffer();
     let totalBytes = 0;
     let offset = 0;
 
-    while (offset < buf.length) {
-      const result = parseLzma2ChunkHeader(buf, offset);
+    while (true) {
+      const result = parseLzma2ChunkHeader(input, offset);
 
       if (!result.success) {
         throw new Error('Truncated LZMA2 chunk header');
@@ -93,21 +104,28 @@ export class Lzma2Decoder {
         break;
       }
 
-      // Validate we have enough data for the chunk
-      const dataSize = chunk.type === 'uncompressed' ? chunk.uncompSize : chunk.compSize;
-      if (offset + chunk.headerSize + dataSize > buf.length) {
-        throw new Error(`Truncated LZMA2 ${chunk.type} data`);
-      }
-
       // Handle dictionary reset
       if (chunk.dictReset) {
         this.lzmaDecoder.resetDictionary();
       }
 
+      // Handle state reset
+      if (chunk.stateReset) {
+        this.lzmaDecoder.resetProbabilities();
+      }
+
+      // Apply new properties if present
+      if (chunk.newProps) {
+        const { lc, lp, pb } = chunk.newProps;
+        this.lzmaDecoder.setLcLpPb(lc, lp, pb);
+      }
+
       const dataOffset = offset + chunk.headerSize;
+      const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
 
       if (chunk.type === 'uncompressed') {
-        const uncompData = buf.slice(dataOffset, dataOffset + chunk.uncompSize);
+        // Read uncompressed data directly
+        const uncompData = readBytes(input, dataOffset, chunk.uncompSize);
 
         // Feed uncompressed data to dictionary so subsequent LZMA chunks can reference it
         this.lzmaDecoder.feedUncompressed(uncompData);
@@ -115,32 +133,8 @@ export class Lzma2Decoder {
         totalBytes += uncompData.length;
         offset = dataOffset + chunk.uncompSize;
       } else {
-        // LZMA compressed chunk
-
-        // Apply new properties if present
-        if (chunk.newProps) {
-          const { lc, lp, pb } = chunk.newProps;
-          if (!this.lzmaDecoder.setLcLpPb(lc, lp, pb)) {
-            throw new Error(`Invalid LZMA properties: lc=${lc} lp=${lp} pb=${pb}`);
-          }
-          this.propsSet = true;
-        } else {
-          // No new properties, check if we already have them
-          if (!this.propsSet) {
-            throw new Error('LZMA chunk without properties');
-          }
-        }
-
-        // Reset probabilities if state reset
-        if (chunk.stateReset) {
-          this.lzmaDecoder.resetProbabilities();
-        }
-
-        // Determine solid mode
-        const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
-
-        // Decode LZMA chunk directly to sink
-        totalBytes += this.lzmaDecoder.decodeWithSink(buf, dataOffset, chunk.uncompSize, useSolid);
+        // LZMA compressed chunk - decode directly from BufferLike
+        totalBytes += this.lzmaDecoder.decodeWithSink(input, dataOffset, chunk.uncompSize, useSolid);
 
         offset = dataOffset + chunk.compSize;
       }
@@ -159,22 +153,21 @@ export class Lzma2Decoder {
    * @returns Decompressed data
    */
   decode(input: BufferLike, unpackSize?: number): Buffer {
-    // Convert BufferList to Buffer for low-level parsing
-    const buf = Buffer.isBuffer(input) ? input : input.toBuffer();
-
-    // Pre-allocate output buffer if size is known
+    // Pre-allocate output buffer if size is known and safe for this Node version
     let outputBuffer: Buffer | null = null;
     let outputPos = 0;
     const outputChunks: Buffer[] = [];
 
-    if (unpackSize && unpackSize > 0) {
+    const MAX_SAFE_SIZE = 256 * 1024 * 1024; // 256MB
+    if (unpackSize && unpackSize > 0 && unpackSize <= MAX_SAFE_SIZE) {
       outputBuffer = allocBufferUnsafe(unpackSize);
     }
 
     let offset = 0;
 
-    while (offset < buf.length) {
-      const result = parseLzma2ChunkHeader(buf, offset);
+    // Parse and decode LZMA2 chunks one at a time
+    while (true) {
+      const result = parseLzma2ChunkHeader(input, offset);
 
       if (!result.success) {
         throw new Error('Truncated LZMA2 chunk header');
@@ -186,21 +179,30 @@ export class Lzma2Decoder {
         break;
       }
 
-      // Validate we have enough data for the chunk
-      const dataSize = chunk.type === 'uncompressed' ? chunk.uncompSize : chunk.compSize;
-      if (offset + chunk.headerSize + dataSize > buf.length) {
-        throw new Error(`Truncated LZMA2 ${chunk.type} data`);
-      }
+      const dataOffset = offset + chunk.headerSize;
 
       // Handle dictionary reset
       if (chunk.dictReset) {
         this.lzmaDecoder.resetDictionary();
       }
 
-      const dataOffset = offset + chunk.headerSize;
+      // Handle state reset
+      if (chunk.stateReset) {
+        this.lzmaDecoder.resetProbabilities();
+      }
+
+      // Apply new properties if present
+      if (chunk.newProps) {
+        const { lc, lp, pb } = chunk.newProps;
+        this.lzmaDecoder.setLcLpPb(lc, lp, pb);
+      }
+
+      // Determine solid mode
+      const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
 
       if (chunk.type === 'uncompressed') {
-        const uncompData = buf.slice(dataOffset, dataOffset + chunk.uncompSize);
+        // Read uncompressed data
+        const uncompData = readBytes(input, dataOffset, chunk.uncompSize);
 
         // Copy to output
         if (outputBuffer) {
@@ -215,38 +217,14 @@ export class Lzma2Decoder {
 
         offset = dataOffset + chunk.uncompSize;
       } else {
-        // LZMA compressed chunk
-
-        // Apply new properties if present
-        if (chunk.newProps) {
-          const { lc, lp, pb } = chunk.newProps;
-          if (!this.lzmaDecoder.setLcLpPb(lc, lp, pb)) {
-            throw new Error(`Invalid LZMA properties: lc=${lc} lp=${lp} pb=${pb}`);
-          }
-          this.propsSet = true;
-        } else {
-          // No new properties, check if we already have them
-          if (!this.propsSet) {
-            throw new Error('LZMA chunk without properties');
-          }
-        }
-
-        // Reset probabilities if state reset
-        if (chunk.stateReset) {
-          this.lzmaDecoder.resetProbabilities();
-        }
-
-        // Determine solid mode - preserve dictionary if not resetting state or if only resetting state (not dict)
-        const useSolid = !chunk.stateReset || (chunk.stateReset && !chunk.dictReset);
-
-        // Decode LZMA chunk - use zero-copy when we have pre-allocated buffer
+        // LZMA compressed chunk - decode directly from BufferLike
         if (outputBuffer) {
           // Zero-copy: decode directly into caller's buffer
-          const bytesWritten = this.lzmaDecoder.decodeToBuffer(buf, dataOffset, chunk.uncompSize, outputBuffer, outputPos, useSolid);
+          const bytesWritten = this.lzmaDecoder.decodeToBuffer(input, dataOffset, chunk.uncompSize, outputBuffer, outputPos, useSolid);
           outputPos += bytesWritten;
         } else {
           // No pre-allocation: decode to new buffer and collect chunks
-          const chunkData = buf.slice(dataOffset, dataOffset + chunk.compSize);
+          const chunkData = readBytes(input, dataOffset, chunk.compSize);
           const decoded = this.lzmaDecoder.decode(chunkData, 0, chunk.uncompSize, useSolid);
           outputChunks.push(decoded);
         }
@@ -259,7 +237,8 @@ export class Lzma2Decoder {
     if (outputBuffer) {
       return outputPos < outputBuffer.length ? outputBuffer.slice(0, outputPos) : outputBuffer;
     }
-    return Buffer.concat(outputChunks);
+    // Use bufferConcat which handles large buffers safely via pairwise combination
+    return bufferConcat(outputChunks);
   }
 }
 
@@ -272,6 +251,13 @@ export class Lzma2Decoder {
  * @returns Decompressed data (or bytes written if outputSink provided)
  */
 export function decodeLzma2(input: BufferLike, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
+  // For very large outputs on old Node versions, we cannot return a single Buffer
+  // Check if output would exceed safe buffer limits
+  const MAX_SAFE_SIZE = 256 * 1024 * 1024; // 256MB
+  if (!outputSink && unpackSize && unpackSize > 0 && unpackSize > MAX_SAFE_SIZE) {
+    throw new Error(`Cannot combine buffers: total size (${unpackSize} bytes) exceeds Node.js buffer limit. LZMA2 archives with folders larger than ${Math.floor(MAX_SAFE_SIZE / (1024 * 1024))}MB cannot be fully buffered on this Node version. Use streaming mode with an output sink instead.`);
+  }
+
   const decoder = new Lzma2Decoder(properties, outputSink as OutputSink);
   if (outputSink) {
     // Zero-copy mode: write to sink during decode
