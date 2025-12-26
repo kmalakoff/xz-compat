@@ -5,7 +5,7 @@
  * Decodes LZMA2 data from a buffer or BufferList.
  */
 
-import { allocBufferUnsafe, type BufferLike, bufferConcat, bufferFrom } from 'extract-base-iterator';
+import { allocBufferUnsafe, type BufferLike, bufferConcat, bufferFrom, canAllocateBufferSize } from 'extract-base-iterator';
 import { parseLzma2ChunkHeader } from '../lib/Lzma2ChunkParser.ts';
 import { type OutputSink, parseLzma2DictionarySize } from '../types.ts';
 import { LzmaDecoder } from './LzmaDecoder.ts';
@@ -158,8 +158,9 @@ export class Lzma2Decoder {
     let outputPos = 0;
     const outputChunks: Buffer[] = [];
 
-    const MAX_SAFE_SIZE = 256 * 1024 * 1024; // 256MB
-    if (unpackSize && unpackSize > 0 && unpackSize <= MAX_SAFE_SIZE) {
+    // Use canAllocateBufferSize to dynamically check if pre-allocation is safe
+    const canPreAllocate = unpackSize && unpackSize > 0 && canAllocateBufferSize(unpackSize);
+    if (canPreAllocate) {
       outputBuffer = allocBufferUnsafe(unpackSize);
     }
 
@@ -252,10 +253,21 @@ export class Lzma2Decoder {
  */
 export function decodeLzma2(input: BufferLike, properties: Buffer | Uint8Array, unpackSize?: number, outputSink?: { write(buffer: Buffer): void }): Buffer | number {
   // For very large outputs on old Node versions, we cannot return a single Buffer
-  // Check if output would exceed safe buffer limits
-  const MAX_SAFE_SIZE = 256 * 1024 * 1024; // 256MB
-  if (!outputSink && unpackSize && unpackSize > 0 && unpackSize > MAX_SAFE_SIZE) {
-    throw new Error(`Cannot combine buffers: total size (${unpackSize} bytes) exceeds Node.js buffer limit. LZMA2 archives with folders larger than ${Math.floor(MAX_SAFE_SIZE / (1024 * 1024))}MB cannot be fully buffered on this Node version. Use streaming mode with an output sink instead.`);
+  // Use streaming mode internally to handle large outputs on modern Node
+  if (!outputSink && unpackSize && unpackSize > 0 && !canAllocateBufferSize(unpackSize)) {
+    // Large output - use streaming mode with internal chunking
+    const chunks: Buffer[] = [];
+    const sink: OutputSink = {
+      write(buffer: Buffer): void {
+        chunks.push(buffer);
+      },
+    };
+
+    const decoder = new Lzma2Decoder(properties, sink);
+    decoder.decodeWithSink(input);
+
+    // Combine chunks at the end - use bufferConcat for safe combination
+    return bufferConcat(chunks);
   }
 
   const decoder = new Lzma2Decoder(properties, outputSink as OutputSink);
