@@ -1,6 +1,6 @@
 {
   "name": "xz-compat",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "XZ Decompression Library",
   "keywords": [
     "extract",
