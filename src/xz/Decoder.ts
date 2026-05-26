@@ -579,10 +579,7 @@ export function createXZDecoder(): TransformType {
       // Decompress blocks sequentially (native is async)
       let blockIndex = 0;
       const pushBlock = (err: Error | null) => {
-        if (err) {
-          callback(err);
-          return;
-        }
+        if (err) return callback(err);
 
         if (blockIndex >= blockRecords.length) {
           // All blocks processed - purge input BufferList to free memory

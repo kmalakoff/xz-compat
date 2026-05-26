@@ -1,6 +1,6 @@
 {
   "name": "xz-compat",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "XZ Decompression Library",
   "keywords": [
     "extract",
@@ -60,6 +60,7 @@
   "devDependencies": {
     "@types/mocha": "*",
     "@types/node": "*",
+    "cross-spawn-cb": "^3.2.1",
     "fs-iterator": "^7.0.0",
     "fs-remove-compat": "^1.0.1",
     "fs-stats-spys": "^1.0.0",
