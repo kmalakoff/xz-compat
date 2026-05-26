@@ -55,7 +55,7 @@ function hasRequiredFiles(dirPath: string): boolean {
 /**
  * Clone or update the XZ repository (callback-based, Node 0.8 compatible)
  */
-function cloneOrUpdateRepo(targetDir: string, callback: (err?: Error) => void): void {
+function cloneOrUpdateRepo(targetDir: string, callback: (err?: Error | null) => void): void {
   if (directoryExists(targetDir)) {
     if (hasRequiredFiles(targetDir)) {
       return callback();
@@ -82,7 +82,7 @@ function cloneOrUpdateRepo(targetDir: string, callback: (err?: Error) => void): 
 /**
  * Ensure XZ test data is available in .cache/xz
  */
-export function ensureXZTestData(callback: (err?: Error) => void): void {
+export function ensureXZTestData(callback: (err?: Error | null) => void): void {
   cloneOrUpdateRepo(XZ_CACHE_DIR, callback);
 }
 
@@ -113,7 +113,7 @@ export function downloadFixture(url: string, filename: string, callback: (err: E
     mkdirp(CACHE_DIR, (mkdirErr: Error | null) => {
       if (mkdirErr) return callback(mkdirErr);
 
-      getFile(url, filepath, (downloadErr?: Error) => {
+      getFile(url, filepath, (downloadErr: Error | null) => {
         if (downloadErr) return callback(downloadErr);
         callback(null, filepath);
       });
