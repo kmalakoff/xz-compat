@@ -7,8 +7,9 @@
  */
 
 import { exec as execCallback } from 'child_process';
+import spawnCallback from 'cross-spawn-cb';
 import fs from 'fs';
-import Iterator from 'fs-iterator';
+import Iterator, { type Entry } from 'fs-iterator';
 import { rmSync } from 'fs-remove-compat';
 import getFile from 'get-file-compat';
 import mkdirp from 'mkdirp-classic';
@@ -22,17 +23,49 @@ const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : 
 // Use separate directories from other tests to avoid cleanup conflicts
 const TMP_DIR = path.join(__dirname, '..', '..', '.tmp', 'comparison');
 const CACHE_DIR = path.join(__dirname, '..', '..', '.cache');
+const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures');
 
-// Test configuration for tar.xz
-const TAR_XZ_CONFIG = {
-  url: 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz',
-  filename: 'node-v24.12.0-linux-x64.tar.xz',
-  extractedName: 'node-v24.12.0-linux-x64',
-  nativeCmd: (cachePath: string, tmpDir: string) => `cd "${tmpDir}" && tar -xJf "${cachePath}"`,
-  checkCmd: 'which tar && which xz',
-  strip: 1,
-  skipModeCheck: false,
+const isWindows = process.platform === 'win32';
+
+type NativeExtractFn = (cachePath: string, tmpDir: string, callback: (err?: Error | null) => void) => void;
+
+const nativeExtractTarXzUnix: NativeExtractFn = (cachePath, tmpDir, callback) => {
+  spawnCallback('tar', ['-xJf', cachePath, '-C', tmpDir], (err?: Error | null) => callback(err || undefined));
 };
+
+const nativeExtractTarXzWindows: NativeExtractFn = (cachePath, tmpDir, callback) => {
+  const tarPath = path.join(tmpDir, path.basename(cachePath, '.xz'));
+  spawnCallback('7z', ['x', '-y', `-o${tmpDir}`, cachePath], (err?: Error | null) => {
+    if (err) return callback(err);
+    spawnCallback('7z', ['x', '-y', `-o${tmpDir}`, tarPath], (err?: Error | null) => {
+      try {
+        fs.unlinkSync(tarPath);
+      } catch (_) {}
+      callback(err || undefined);
+    });
+  });
+};
+
+// On Linux/macOS: download the Node.js Linux tarball and compare with native tar.
+// On Windows: use a local cross-platform fixture (no POSIX symlinks) since the Linux tarball
+// contains symlinks that Windows cannot create, causing 7z to fail with a fatal error.
+const TAR_XZ_CONFIG = isWindows
+  ? {
+      archivePath: path.join(FIXTURES_DIR, 'test-cross-platform.tar.xz'),
+      downloadUrl: null as string | null,
+      extractedName: 'data',
+      nativeExtract: nativeExtractTarXzWindows,
+      checkCmd: 'where 7z',
+      strip: 1,
+    }
+  : {
+      archivePath: path.join(CACHE_DIR, 'node-v24.12.0-linux-x64.tar.xz'),
+      downloadUrl: 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz' as string | null,
+      extractedName: 'node-v24.12.0-linux-x64',
+      nativeExtract: nativeExtractTarXzUnix,
+      checkCmd: 'which tar && which xz',
+      strip: 1,
+    };
 
 /**
  * Interface for file stats collected from directory tree
@@ -62,22 +95,18 @@ function collectStats(dirPath: string, callback: (err: Error | null, stats?: Rec
   const iterator = new Iterator(dirPath, { alwaysStat: true, lstat: true });
 
   iterator.forEach(
-    (entry): void => {
+    (entry: Entry): void => {
+      const entryStats = entry.stats as fs.Stats | undefined;
+      if (!entryStats) return;
       stats[entry.path] = {
-        size: entry.stats.size,
-        mode: entry.stats.mode,
-        mtime: entry.stats.mtime instanceof Date ? entry.stats.mtime.getTime() : 0,
-        type: entry.stats.isDirectory() ? 'directory' : entry.stats.isFile() ? 'file' : entry.stats.isSymbolicLink() ? 'symlink' : 'other',
+        size: entryStats.size,
+        mode: entryStats.mode,
+        mtime: entryStats.mtime instanceof Date ? entryStats.mtime.getTime() : 0,
+        type: entryStats.isDirectory() ? 'directory' : entryStats.isFile() ? 'file' : entryStats.isSymbolicLink() ? 'symlink' : 'other',
       };
     },
     { concurrency: 1024 },
-    (err) => {
-      if (err) {
-        callback(err);
-      } else {
-        callback(null, stats);
-      }
-    }
+    (err) => (err ? callback(err) : callback(null, stats))
   );
 }
 
@@ -93,7 +122,7 @@ function removeDir(dirPath: string): void {
 /**
  * Download file to cache if not present
  */
-function ensureCached(fileUrl: string, cachePath: string, callback: (err?: Error) => void): void {
+function ensureCached(fileUrl: string, cachePath: string, callback: (err?: Error | null) => void): void {
   if (fs.existsSync(cachePath)) {
     console.log(`    Using cached: ${path.basename(cachePath)}`);
     callback();
@@ -111,14 +140,16 @@ function ensureCached(fileUrl: string, cachePath: string, callback: (err?: Error
 /**
  * Compare two directory trees and report differences
  */
-function compareExtractions(nativeDir: string, xzCompatDir: string, skipModeCheck: boolean, callback: (err: Error | null, differences?: string[]) => void): void {
+function compareExtractions(nativeDir: string, xzCompatDir: string, callback: (err: Error | null, differences?: string[]) => void): void {
   console.log('    Collecting stats from native extraction...');
   collectStats(nativeDir, (err, statsNative) => {
     if (err) return callback(err);
+    if (!statsNative) return callback(new Error('No stats from native dir'));
 
     console.log('    Collecting stats from xz-compat extraction...');
     collectStats(xzCompatDir, (err, statsXzCompat) => {
       if (err) return callback(err);
+      if (!statsXzCompat) return callback(new Error('No stats from xz-compat dir'));
 
       const differences: string[] = [];
 
@@ -150,10 +181,7 @@ function compareExtractions(nativeDir: string, xzCompatDir: string, skipModeChec
             differences.push(`Size mismatch for ${filePath}: native=${statNative.size}, xz-compat=${statXzCompat.size}`);
           }
 
-          // Check mode (permissions), but allow for minor differences due to umask
-          // Use Number() to handle BigInt mode values in older Node.js versions on Windows
-          const modeDiff = Math.abs(Number(statNative.mode) - Number(statXzCompat.mode));
-          if (!skipModeCheck && modeDiff > 0o22) {
+          if (Number(statNative.mode) !== Number(statXzCompat.mode)) {
             differences.push(`Mode mismatch for ${filePath}: native=${Number(statNative.mode).toString(8)}, xz-compat=${Number(statXzCompat.mode).toString(8)}`);
           }
         }
@@ -166,15 +194,13 @@ function compareExtractions(nativeDir: string, xzCompatDir: string, skipModeChec
 
 describe('XZ decoder comparison - xz-compat vs native tar', () => {
   const config = TAR_XZ_CONFIG;
-  const cachePath = path.join(CACHE_DIR, config.filename);
+  const archivePath = config.archivePath;
   const nativeExtractDir = path.join(TMP_DIR, 'native-tar');
   const xzCompatExtractDir = path.join(TMP_DIR, 'xz-compat');
 
   let toolAvailable = false;
 
-  before(function (done) {
-    this.timeout(120000);
-
+  before((done) => {
     // Check if native tar and xz are available
     checkToolAvailable(config.checkCmd, (available) => {
       toolAvailable = available;
@@ -194,30 +220,20 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
 
       // Ensure XZ test data is downloaded
       ensureXZTestData((err) => {
-        if (err) {
-          done(err);
-          return;
-        }
+        if (err) return done(err);
 
-        // Download file if needed
-        ensureCached(config.url, cachePath, (err) => {
-          if (err) {
-            done(err);
-            return;
-          }
+        // Download file if needed (skip for local fixture paths)
+        const afterDownload = (err?: Error | null) => {
+          if (err) return done(err);
 
           // Clean up previous extractions
           removeDir(nativeExtractDir);
           removeDir(xzCompatExtractDir);
 
-          // Extract with native tar
-          console.log('    Extracting with native tar...');
-          const nativeCmd = config.nativeCmd(cachePath, TMP_DIR);
-          execCallback(nativeCmd, (err) => {
-            if (err) {
-              done(err);
-              return;
-            }
+          // Extract with native tool
+          console.log(isWindows ? '    Extracting with 7-Zip...' : '    Extracting with native tar...');
+          config.nativeExtract(archivePath, TMP_DIR, (err) => {
+            if (err) return done(err);
 
             // Find and rename the extracted directory
             const extractedDir = path.join(TMP_DIR, config.extractedName);
@@ -230,7 +246,7 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
 
             // Extract with xz-compat + tar-iterator
             console.log('    Extracting with xz-compat + tar-iterator...');
-            const readStream = fs.createReadStream(cachePath);
+            const readStream = fs.createReadStream(archivePath);
             const xzDecoder = createXZDecoder();
 
             let dataCount = 0;
@@ -267,10 +283,7 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
               },
               { callbacks: true, concurrency: 1 },
               (err) => {
-                if (err) {
-                  done(new Error(`Tar iterator error: ${err.message}`));
-                  return;
-                }
+                if (err) return done(new Error(`Tar iterator error: ${err.message}`));
                 console.log(`    Both extractions complete (${entryCount} entries)`);
                 done();
               }
@@ -279,7 +292,13 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
             // Pipe: tar.xz file -> xz decoder -> tar iterator
             readStream.pipe(xzDecoder);
           });
-        });
+        };
+
+        if (config.downloadUrl) {
+          ensureCached(config.downloadUrl, archivePath, afterDownload);
+        } else {
+          afterDownload();
+        }
       });
     });
   });
@@ -295,9 +314,10 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
     // So we compare: nativeExtractDir/* vs xzCompatExtractDir/extractedName/*
     const xzCompatSubDir = path.join(xzCompatExtractDir, config.extractedName);
 
-    compareExtractions(nativeExtractDir, xzCompatSubDir, config.skipModeCheck, (err, differences) => {
-      if (err) {
-        done(err);
+    compareExtractions(nativeExtractDir, xzCompatSubDir, (err, differences) => {
+      if (err) return done(err);
+      if (!differences) {
+        done();
         return;
       }
 
