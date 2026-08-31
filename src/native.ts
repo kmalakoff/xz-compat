@@ -139,7 +139,7 @@ export function tryLoadNative(): NativeModule | null {
 
   try {
     console.log('Installing lzma-native for native acceleration...');
-    const installModule = _require('install-module-linked').default;
+    const installModule = _require('install-module-linked-compat').default;
     installModule.sync('lzma-native', nodeModulesPath, {});
     return load();
   } catch {

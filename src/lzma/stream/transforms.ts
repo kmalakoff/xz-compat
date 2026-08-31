@@ -53,6 +53,7 @@ export function createLzma2Decoder(properties: Buffer | Uint8Array): InstanceTyp
   // Buffer for incomplete chunk data
   let pending: Buffer | null = null;
   let finished = false;
+  let firstChunk = true;
 
   return new Transform({
     transform: function (this: InstanceType<typeof Transform>, chunk: Buffer, _encoding: string, callback: (err?: Error | null) => void) {
@@ -88,6 +89,12 @@ export function createLzma2Decoder(properties: Buffer | Uint8Array): InstanceTyp
             finished = true;
             break;
           }
+
+          // The first chunk of a stream must reset the dictionary
+          if (firstChunk && !chunkInfo.dictReset) {
+            throw new Error('First LZMA2 chunk must reset the dictionary');
+          }
+          firstChunk = false;
 
           // Handle dictionary reset
           if (chunkInfo.dictReset) {
