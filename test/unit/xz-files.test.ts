@@ -217,11 +217,9 @@ describe('XZ decoder - official test files', () => {
   });
 
   describe('Bad files - LZMA2 errors', () => {
-    // NOTE: bad-1-lzma2-1.xz tests that the first chunk must reset dictionary.
-    // Our LZMA2 decoder doesn't validate this edge case, consistent with many decoders.
-    it.skip('bad-1-lzma2-1.xz - first chunk doesnt reset dictionary', async () => {
+    it('bad-1-lzma2-1.xz - first chunk doesnt reset dictionary', (done) => {
       const data = fs.readFileSync(path.join(TEST_FILES_DIR, 'bad-1-lzma2-1.xz'));
-      await assert.rejects(decodeXZ(data), Error);
+      expectDecodeError(data, done, /reset the dictionary/i);
     });
 
     it('bad-1-lzma2-6.xz - reserved control byte 0x03', (done) => {

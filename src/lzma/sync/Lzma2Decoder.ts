@@ -104,6 +104,11 @@ export class Lzma2Decoder {
         break;
       }
 
+      // The first chunk of a stream must reset the dictionary
+      if (offset === 0 && !chunk.dictReset) {
+        throw new Error('First LZMA2 chunk must reset the dictionary');
+      }
+
       // Handle dictionary reset
       if (chunk.dictReset) {
         this.lzmaDecoder.resetDictionary();
@@ -178,6 +183,11 @@ export class Lzma2Decoder {
 
       if (chunk.type === 'end') {
         break;
+      }
+
+      // The first chunk of a stream must reset the dictionary
+      if (offset === 0 && !chunk.dictReset) {
+        throw new Error('First LZMA2 chunk must reset the dictionary');
       }
 
       const dataOffset = offset + chunk.headerSize;
