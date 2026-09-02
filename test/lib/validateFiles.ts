@@ -7,10 +7,8 @@ import path from 'path';
 import { TARGET } from './constants.ts';
 
 export default function validateFiles(options?: { strip?: boolean }, callback?: (err?: Error) => void): void | Promise<void> {
-  if (typeof options === 'function') {
-    callback = options;
-    options = { strip: false };
-  }
+  callback = typeof options === 'function' ? options : callback;
+  options = typeof options === 'function' ? { strip: false } : options;
 
   if (typeof callback === 'function') {
     const dataPath = !options?.strip ? path.join(TARGET, 'data') : TARGET;
@@ -29,9 +27,7 @@ export default function validateFiles(options?: { strip?: boolean }, callback?: 
         callback?.(undefined);
       }
     );
-  } else {
-    return new Promise<void>(function validatePromise(resolve, reject) {
-      validateFiles(options, (err) => (err ? reject(err) : resolve()));
-    });
+    return;
   }
+  return new Promise((resolve, reject) => validateFiles(options, (err?: Error) => (err ? reject(err) : resolve(null))));
 }
