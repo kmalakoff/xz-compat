@@ -4,7 +4,7 @@
 
 import assert from 'assert';
 import { createXZDecoder, decodeXZ } from 'xz-compat';
-import { bufferAlloc, bufferFrom } from '../lib/compat.ts';
+import { bufferAlloc, bufferFrom } from '../../lib/compat.ts';
 
 function expectDecodeFailure(data: Buffer, done: Mocha.Done, matcher?: RegExp): void {
   decodeXZ(data, (err) => {
