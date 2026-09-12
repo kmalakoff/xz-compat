@@ -22,7 +22,7 @@ import { ensureXZTestData } from '../lib/download.ts';
 const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : url.fileURLToPath(import.meta.url));
 // Use separate directories from other tests to avoid cleanup conflicts
 const TMP_DIR = path.join(__dirname, '..', '..', '.tmp', 'comparison');
-const CACHE_DIR = path.join(__dirname, '..', '..', '.cache');
+const CACHE_DIR = path.join(__dirname, '..', '..', '.tmp', 'cache');
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures');
 
 const isWindows = process.platform === 'win32';
