@@ -1,296 +1,62 @@
 # xz-compat
 
-**XZ Decompression Library**
-
-xz-compat is a complete pure JavaScript implementation of XZ decompression with support for LZMA2 compression, BCJ filters (Branch Conversion for various CPU architectures), and Delta filtering. Compatible with Node.js 0.8+.
-
-## Features
-
-- ✅ **XZ Format Support**: Full XZ container format decoding
-- ✅ **LZMA2 Decoder**: Complete LZMA2 decompression implementation
-- ✅ **High-Level 7z API**: Streamlined decoding for 7z files with automatic native acceleration
-- ✅ **BCJ Filters**: Branch conversion for improved compression on executables
-  - x86 (32-bit)
-  - ARM (32-bit)
-  - ARM64 / AArch64
-  - ARM Thumb
-  - PowerPC
-  - SPARC
-  - IA64 / Itanium
-- ✅ **Delta Filter**: Byte-level delta encoding
-- ✅ **Streaming & Sync**: Both streaming transforms and synchronous decoding
-- ✅ **Node 0.8+**: Works on legacy Node.js versions
-- ✅ **Native Acceleration**: Optional lzma-native on Node.js 10+ for 3-5x performance boost
-
-## Installation
+Decompress XZ, LZMA, and LZMA2 data in Node.js. The package has a pure JavaScript fallback, optional native acceleration, and exports BCJ and Delta filters.
 
 ```bash
 npm install xz-compat
 ```
 
-### Optional Native Acceleration
+The package targets Node.js 0.8 and newer. Use the CommonJS entry point on older Node.js versions; the ESM examples below require a runtime that supports ESM.
 
-For Node.js 10+, install `lzma-native` for automatic performance boost:
+## XZ files
 
-```bash
-npm install lzma-native
-```
-
-This provides 3-5x faster decompression. The library automatically detects and uses native bindings when available, falling back to pure JavaScript on older Node versions, when installation fails, or when disabled via `LZMA_NATIVE_DISABLE=1`.
-
-## Quick Start
-
-### XZ Decompression (Self-describing format)
-
-```javascript
+```js
 import { readFileSync } from 'fs';
 import { decodeXZ } from 'xz-compat';
 
-const compressedData = readFileSync('file.xz');
-const decompressedData = decodeXZ(compressedData);
-console.log('Decompressed:', decompressedData.toString());
+const output = await decodeXZ(readFileSync('input.xz'));
+console.log(output.length); // decompressed byte count
 ```
 
-### Streaming XZ Decompression
+For large files, use the streaming transform:
 
-```javascript
-import { createReadStream } from 'fs';
+```js
+import { createReadStream, createWriteStream } from 'fs';
 import { createXZDecoder } from 'xz-compat';
 
-const input = createReadStream('file.xz');
-const decoder = createXZDecoder();
-
-input.pipe(decoder);
-decoder.on('data', (chunk) => {
-  console.log('Decompressed chunk:', chunk);
-});
+createReadStream('input.xz')
+  .pipe(createXZDecoder())
+  .pipe(createWriteStream('output'));
 ```
 
-### 7z LZMA/LZMA2 Decompression (High-level API)
+## Public API
 
-```javascript
-import { decode7zLzma2, decode7zLzma } from 'xz-compat';
+| Export | Use |
+| --- | --- |
+| `decodeXZ(buffer)` | Decode a complete XZ container. Returns a promise for a Buffer-like result. |
+| `createXZDecoder()` | Create a streaming XZ transform. |
+| `decode7zLzma(data, properties, unpackSize)` | Decode raw LZMA data from a 7z entry. |
+| `decode7zLzma2(data, properties, unpackSize?)` | Decode raw LZMA2 data from a 7z entry. |
+| `decodeLzma(data, properties, outSize, sink?)` | Decode raw LZMA data synchronously. |
+| `decodeLzma2(data, properties, unpackSize, sink?)` | Decode raw LZMA2 data synchronously. |
+| `createLzmaDecoder(properties, outSize)` | Create a streaming LZMA transform. |
+| `createLzma2Decoder(properties, unpackSize?)` | Create a streaming LZMA2 transform. |
+| `decodeBcj*`, `createBcj*Decoder` | Decode or stream supported x86, ARM, ARM64, ARM Thumb, PowerPC, SPARC, and IA64 BCJ filters. |
+| `decodeDelta(buffer, distance?)` | Decode a byte-level Delta filter. |
+| `isNativeAvailable()` | Check whether the optional native decoder can load. |
 
-// Decompress LZMA2 from a 7z file (properties extracted separately)
-const lzma2Data = readFileSync('data.7z');
-const lzma2Properties = /* from 7z folder structure */;
-const decompressed = decode7zLzma2(lzma2Data, lzma2Properties);
-```
+The low-level LZMA APIs require codec properties and, for LZMA1, the expected output size. The 7z APIs accept those properties separately because that is how the 7z format stores them.
 
-### LZMA/LZMA2 (Low-level API)
+## Optional native acceleration
 
-```javascript
-import { decodeLzma2 } from 'xz-compat';
-import { writeFileSync } from 'fs';
+On Node.js 14 and newer, the decoder can use `lzma-native` on supported platforms. It falls back to JavaScript when the native module is unavailable. Native loading may try to install the module dynamically. Set `LZMA_NATIVE_DISABLE=1` to prevent that attempt.
 
-const lzma2Data = readFileSync('data.lzma2');
-const chunks = [];
+The native path has no measured speed guarantee. Choose it for a native implementation when available, not for a fixed performance multiplier.
 
-decodeLzma2(lzma2Data, lzma2Properties, expectedSize, {
-  write: (chunk) => {
-    chunks.push(chunk);
-  }
-});
+## Limits
 
-const decompressed = Buffer.concat(chunks);
-writeFileSync('output.bin', decompressed);
-```
-
-### Using BCJ Filters Directly
-
-```javascript
-import { decodeBcj, decodeBcjArm } from 'xz-compat';
-
-// Decode x86 BCJ filtered data
-const x86Data = readFileSync('filtered-x86.bin');
-const unfiltered = decodeBcj(x86Data);
-
-// Decode ARM BCJ filtered data
-const armData = readFileSync('filtered-arm.bin');
-const unfilteredArm = decodeBcjArm(armData);
-```
-
-## API Reference
-
-### High-Level APIs (Recommended)
-
-#### XZ Decompression
-#### `decodeXZ(buffer: Buffer): Buffer`
-Synchronously decompresses XZ format data.
-- **Automatic native acceleration**: Uses lzma-native when available on Node 10+
-- **Self-describing**: Properties embedded in XZ format
-
-#### `createXZDecoder(): Transform`
-Creates a streaming Transform for XZ decompression.
-- Automatically uses native acceleration when available
-
-#### 7z LZMA/LZMA2 Decompression
-#### `decode7zLzma2(data: Buffer, properties: Buffer, unpackSize?: number): Buffer`
-Decompresses LZMA2 data from a 7z file.
-- Accepts properties separately (matching 7z format)
-- Tries native acceleration via lzma-native automatically
-- Falls back to pure JavaScript if native unavailable
-
-#### `decode7zLzma(data: Buffer, properties: Buffer, unpackSize: number): Buffer`
-Decompresses LZMA1 data from a 7z file.
-- Accepts 5-byte properties separately
-- Tries native acceleration automatically
-
-### Low-Level APIs (Specialized Use)
-
-#### LZMA Decompression
-#### `decodeLzma(buffer: Buffer, properties: Buffer, outSize: number, sink?: OutputSink): Buffer`
-Synchronously decodes LZMA1 compressed data.
-- Low-level API for raw LZMA data
-- Requires separate properties and output size
-
-#### `createLzmaDecoder(properties: Buffer, outSize: number): Transform`
-Creates a streaming Transform for LZMA1 decompression.
-
-#### LZMA2 Decompression
-#### `decodeLzma2(buffer: Buffer, properties: Buffer, unpackSize: number, sink?: OutputSink): Buffer`
-Synchronously decodes LZMA2 compressed data.
-
-#### `createLzma2Decoder(properties: Buffer, unpackSize?: number): Transform`
-Creates a streaming Transform for LZMA2 decompression.
-
-### BCJ Filters
-
-Branch Conversion (BCJ) filters improve compression of executables by converting relative branch addresses to absolute addresses, creating more repetitive patterns.
-
-All BCJ filters follow the same interface:
-- `decodeBcj*(buffer: Buffer, properties?: Buffer, unpackSize?: number): Buffer`
-- `createBcj*Decoder(properties?: Buffer, unpackSize?: number): Transform`
-
-Supported BCJ filters:
-- `decodeBcj` / `createBcjDecoder` - x86 (32-bit)
-- `decodeBcjArm` / `createBcjArmDecoder` - ARM (32-bit)
-- `decodeBcjArm64` / `createBcjArm64Decoder` - ARM64 / AArch64
-- `decodeBcjArmt` / `createBcjArmtDecoder` - ARM Thumb
-- `decodeBcjPpc` / `createBcjPpcDecoder` - PowerPC
-- `decodeBcjSparc` / `createBcjSparcDecoder` - SPARC
-- `decodeBcjIa64` / `createBcjIa64Decoder` - IA64 / Itanium
-
-### Delta Filter
-
-#### `decodeDelta(buffer: Buffer, distance?: Buffer): Buffer`
-Decodes Delta filtered data (inter-byte differences).
-
-## Use Cases
-
-### 1. Decompressing XZ Archives
-
-```javascript
-import { createReadStream } from 'fs';
-import { createXZDecoder } from 'xz-compat';
-import { pipeline } from 'stream/promises';
-
-async function decompressXZ(inputPath, outputPath) {
-  await pipeline(
-    createReadStream(inputPath),
-    createXZDecoder(),
-    createWriteStream(outputPath)
-  );
-}
-```
-
-### 2. Working with LZMA Compressed Files
-
-```javascript
-import { decodeLzma2 } from 'xz-compat';
-
-// Decompress raw LZMA2 stream
-const data = readFileSync('data.lzma2');
-const chunks = [];
-
-decodeLzma2(data, propertiesBuffer, uncompressedSize, {
-  write: (chunk) => chunks.push(chunk)
-});
-
-const result = Buffer.concat(chunks);
-```
-
-### 3. Batch Processing Compressed Files
-
-```javascript
-import { decodeXZ } from 'xz-compat';
-
-function processXZFiles(filePaths) {
-  return filePaths.map(file => {
-    const compressed = readFileSync(file);
-    const decompressed = decodeXZ(compressed);
-    // Process decompressed data
-    return processData(decompressed);
-  });
-}
-```
-
-## Technical Details
-
-### XZ Format Structure
-
-XZ is a container format that wraps LZMA2 compressed data:
-1. Stream Header
-2. One or more Blocks (each with Block Header + Compressed Data)
-3. Index (records block positions)
-4. Stream Footer
-
-Each Block can contain:
-- A chain of preprocessing filters (Delta, BCJ)
-- LZMA2 compression
-
-### BCJ Filter Algorithm
-
-BCJ filters convert branch instructions in executable code:
-
-**x86 Example:**
-- Original: `E8 xx xx xx xx` (CALL with relative offset)
-- Converted: `E8 aa aa aa aa` (CALL with absolute address)
-
-This creates more repetitive patterns for better LZMA2 compression.
-
-### Reference Implementation
-
-This implementation is based on the reference XZ Utils (XZ Embedded) codebase:
-- [XZ Utils GitHub](https://github.com/tukaani-project/xz)
-- Filter algorithms match the xz embedded reference implementations
-
-## Compatibility
-
-- **Node.js**: 0.8 and above
-- **Browser**: Not tested (designed for Node.js)
-- **Dependencies**: None (pure JavaScript)
-
-## Differences from Native XZ
-
-This is a **decompression-only** implementation focused on compatibility and ease of use:
-- No compression support (only decompression)
-- Simplified streaming interface
-- Pure JavaScript (no native bindings)
-- Optimized for readability and maintainability
-
-## Performance
-
-Performance characteristics:
-- **Synchronous**: Suitable for small to medium files
-- **Streaming**: Memory-efficient for large files
-- **Trade-off**: Pure JavaScript may be slower than native implementations
-- **BCJ Decoding**: Optimized reference algorithm implementations
+This package decompresses; it does not create XZ or LZMA archives. Browser support is not tested.
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please ensure tests pass:
-
-```bash
-npm test
-```
-
-## References
-
-- [XZ Format Specification](https://tukaani.org/xz/xz-file-format.txt)
-- [LZMA SDK](https://www.7-zip.org/sdk.html)
-- [XZ Utils](https://tukaani.org/xz/)

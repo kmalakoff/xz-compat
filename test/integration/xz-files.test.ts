@@ -8,12 +8,10 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import url from 'url';
 import { decodeXZ } from 'xz-compat';
-import { ensureXZTestData } from '../lib/download.ts';
+import { ensureXZTestData, getXZCacheDir } from '../lib/download.ts';
 
-const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : url.fileURLToPath(import.meta.url));
-const TEST_FILES_DIR = path.join(__dirname, '..', '..', '.cache', 'xz', 'tests', 'files');
+const TEST_FILES_DIR = path.join(getXZCacheDir(), 'tests', 'files');
 
 /**
  * Helper to check if test files exist
@@ -64,7 +62,7 @@ describe('XZ decoder - official test files', () => {
       // Verify test files actually exist after download
       if (!testFilesExist()) {
         console.log('    ERROR: XZ test files not found after download');
-        return done(new Error('XZ test files not found in .cache/xz/tests/files after ensureXZTestData()'));
+        return done(new Error('XZ test files not found in .tmp/cache/xz/tests/files after ensureXZTestData()'));
       }
 
       console.log('    XZ test files ready');
