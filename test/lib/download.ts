@@ -4,16 +4,15 @@
  */
 import { execFile as execFileCallback } from 'child_process';
 import fs from 'fs';
-import { safeRm } from 'fs-remove-compat';
 import getFile from 'get-file-compat';
-import mkdirp from 'mkdirp-classic';
 import path from 'path';
-import { CACHE_DIR } from './constants.ts';
+import { stagedCache, verifySha256 } from 'staged-cache';
+import { SHARED_DIR, SHARED_ROOT } from './constants.ts';
 
 // XZ test data repository configuration
-const XZ_CACHE_DIR = path.join(CACHE_DIR, 'xz');
 const XZ_REPO_URL = 'https://github.com/tukaani-project/xz.git';
 const XZ_COMMIT = 'ebb0e6789cefe3be71756881aa8f2009fda9938c';
+const XZ_CACHE_DIR = path.join(SHARED_ROOT, `xz-${XZ_COMMIT}`);
 
 const EXPECTED_FILES = [
   'tests/files/good-0-empty.xz',
@@ -42,18 +41,6 @@ const EXPECTED_FILES = [
 ];
 
 /**
- * Check if directory exists
- */
-function directoryExists(dirPath: string): boolean {
-  try {
-    const stats = fs.statSync(dirPath);
-    return stats.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Check if required files exist in the cached directory
  */
 function hasRequiredFiles(dirPath: string): boolean {
@@ -71,55 +58,28 @@ function git(args: string[], cwd: string | undefined, callback: (err: Error | nu
   execFileCallback('git', args, cwd ? { cwd } : undefined, (err: Error | null, stdout: string | Buffer | undefined) => callback(err, stdout?.toString() ?? ''));
 }
 
-function removeRepo(targetDir: string, callback: (err?: Error | null) => void): void {
-  safeRm(targetDir, { recursive: true, force: true }, callback);
-}
-
-function cloneRepo(targetDir: string, callback: (err?: Error | null) => void): void {
-  mkdirp(path.dirname(targetDir), (mkdirErr: Error | null) => {
-    if (mkdirErr) return callback(mkdirErr);
-    git(['init', targetDir], undefined, (initErr) => {
-      if (initErr) return callback(initErr);
-      git(['remote', 'add', 'origin', XZ_REPO_URL], targetDir, (remoteErr) => {
-        if (remoteErr) return callback(remoteErr);
-        git(['fetch', '--depth', '1', 'origin', XZ_COMMIT], targetDir, (fetchErr) => {
-          if (fetchErr) return callback(fetchErr);
-          git(['checkout', '--detach', XZ_COMMIT], targetDir, (checkoutErr) => callback(checkoutErr));
-        });
-      });
-    });
-  });
-}
-
-function hasExpectedCommit(targetDir: string, callback: (err?: Error | null, matches?: boolean) => void): void {
-  git(['rev-parse', 'HEAD'], targetDir, (err, stdout) => {
-    if (err) return callback(null, false);
-    callback(null, stdout.trim() === XZ_COMMIT && hasRequiredFiles(targetDir));
-  });
-}
-
 /**
- * Clone or update the XZ repository (callback-based, Node 0.8 compatible)
- */
-function cloneOrUpdateRepo(targetDir: string, callback: (err?: Error | null) => void): void {
-  if (directoryExists(targetDir)) {
-    return hasExpectedCommit(targetDir, (verifyErr, matches) => {
-      if (verifyErr) return callback(verifyErr);
-      if (matches) return callback();
-      removeRepo(targetDir, (removeErr) => {
-        if (removeErr) return callback(removeErr);
-        cloneRepo(targetDir, callback);
-      });
-    });
-  }
-  cloneRepo(targetDir, callback);
-}
-
-/**
- * Ensure XZ test data is available in .tmp/cache/xz
+ * Ensure the XZ test data checkout at the pinned commit is in .cache/shared/xz-<commit>
  */
 export function ensureXZTestData(callback: (err?: Error | null) => void): void {
-  cloneOrUpdateRepo(XZ_CACHE_DIR, callback);
+  stagedCache(
+    XZ_CACHE_DIR,
+    {
+      verify: (dir: string, cb: (err: Error | null, valid?: boolean) => void) => {
+        git(['rev-parse', 'HEAD'], dir, (err, stdout) => cb(null, !err && stdout.trim() === XZ_COMMIT && hasRequiredFiles(dir)));
+      },
+      build: (staging: string, cb: (err?: Error | null) => void) => {
+        git(['init', staging], undefined, (initErr) => {
+          if (initErr) return cb(initErr);
+          git(['fetch', '--depth', '1', XZ_REPO_URL, XZ_COMMIT], staging, (fetchErr) => {
+            if (fetchErr) return cb(fetchErr);
+            git(['checkout', '--detach', 'FETCH_HEAD'], staging, (checkoutErr) => cb(checkoutErr));
+          });
+        });
+      },
+    },
+    (err) => callback(err)
+  );
 }
 
 /**
@@ -129,37 +89,33 @@ export function getXZCacheDir(): string {
   return XZ_CACHE_DIR;
 }
 
+export interface DownloadedArtifact {
+  url: string;
+  filename: string;
+  sha256: string;
+}
+
 /**
- * Download file to cache if not present
- * @param url - URL to download from
- * @param filename - Local filename to save as
- * @param callback - Called with (err, filepath)
+ * Download an artifact into the shared cache; a valid copy is reused, anything else is built, verified and renamed into place.
  */
-export function downloadFixture(url: string, filename: string, callback: (err: Error | null, filepath?: string) => void): void {
-  const filepath = path.join(CACHE_DIR, filename);
-
-  // Check if already cached
-  fs.stat(filepath, (statErr) => {
-    if (!statErr) {
-      // Already exists
-      return callback(null, filepath);
-    }
-
-    // Create cache directory
-    mkdirp(CACHE_DIR, (mkdirErr: Error | null) => {
-      if (mkdirErr) return callback(mkdirErr);
-
-      getFile(url, filepath, (downloadErr: Error | null) => {
-        if (downloadErr) return callback(downloadErr);
-        callback(null, filepath);
-      });
-    });
-  });
+export function downloadFixture(artifact: DownloadedArtifact, callback: (err?: Error | null, filepath?: string) => void): void {
+  stagedCache(
+    getFixturePath(artifact.filename),
+    {
+      verify: verifySha256(artifact.sha256),
+      build: (staging: string, cb: (err?: Error | null) => void) => {
+        getFile(artifact.url, staging, (err: Error | null, res?: { statusCode?: number }) => {
+          cb(err || (res && res.statusCode !== 200 ? new Error(`HTTP ${res.statusCode}: ${artifact.url}`) : null));
+        });
+      },
+    },
+    callback
+  );
 }
 
 /**
  * Get the path to a cached fixture
  */
 export function getFixturePath(filename: string): string {
-  return path.join(CACHE_DIR, filename);
+  return path.join(SHARED_DIR, filename);
 }
