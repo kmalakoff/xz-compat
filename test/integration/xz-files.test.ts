@@ -62,7 +62,7 @@ describe('XZ decoder - official test files', () => {
       // Verify test files actually exist after download
       if (!testFilesExist()) {
         console.log('    ERROR: XZ test files not found after download');
-        return done(new Error('XZ test files not found in .tmp/cache/xz/tests/files after ensureXZTestData()'));
+        return done(new Error('XZ test files not found in .cache/shared/xz-<commit>/tests/files after ensureXZTestData()'));
       }
 
       console.log('    XZ test files ready');

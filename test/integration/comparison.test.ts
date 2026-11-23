@@ -11,18 +11,16 @@ import spawnCallback from 'cross-spawn-cb';
 import fs from 'fs';
 import Iterator, { type Entry } from 'fs-iterator';
 import { safeRmSync } from 'fs-remove-compat';
-import getFile from 'get-file-compat';
 import mkdirp from 'mkdirp-classic';
 import path from 'path';
 import TarIterator from 'tar-iterator';
 import url from 'url';
 import { createXZDecoder } from 'xz-compat';
-import { ensureXZTestData } from '../lib/download.ts';
+import { type DownloadedArtifact, downloadFixture, ensureXZTestData, getFixturePath } from '../lib/download.ts';
 
 const __dirname = path.dirname(typeof __filename !== 'undefined' ? __filename : url.fileURLToPath(import.meta.url));
 // Use separate directories from other tests to avoid cleanup conflicts
 const TMP_DIR = path.join(__dirname, '..', '..', '.tmp', 'comparison');
-const CACHE_DIR = path.join(__dirname, '..', '..', '.tmp', 'cache');
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures');
 
 const isWindows = process.platform === 'win32';
@@ -52,15 +50,20 @@ const nativeExtractTarXzWindows: NativeExtractFn = (cachePath, tmpDir, callback)
 const TAR_XZ_CONFIG = isWindows
   ? {
       archivePath: path.join(FIXTURES_DIR, 'test-cross-platform.tar.xz'),
-      downloadUrl: null as string | null,
+      download: null as DownloadedArtifact | null,
       extractedName: 'data',
       nativeExtract: nativeExtractTarXzWindows,
       checkCmd: 'where 7z',
       strip: 1,
     }
   : {
-      archivePath: path.join(CACHE_DIR, 'node-v24.12.0-linux-x64.tar.xz'),
-      downloadUrl: 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz' as string | null,
+      archivePath: getFixturePath('node-v24.12.0-linux-x64.tar.xz'),
+      // Source: Node.js v24.12.0 official Linux x64 binary, MIT license; sha256 from https://nodejs.org/dist/v24.12.0/SHASUMS256.txt
+      download: {
+        url: 'https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz',
+        filename: 'node-v24.12.0-linux-x64.tar.xz',
+        sha256: 'bdebee276e58d0ef5448f3d5ac12c67daa963dd5e0a9bb621a53d1cefbc852fd',
+      } as DownloadedArtifact | null,
       extractedName: 'node-v24.12.0-linux-x64',
       nativeExtract: nativeExtractTarXzUnix,
       checkCmd: 'which tar && which xz',
@@ -117,24 +120,6 @@ function removeDir(dirPath: string): void {
   if (fs.existsSync(dirPath)) {
     safeRmSync(dirPath, { recursive: true, force: true });
   }
-}
-
-/**
- * Download file to cache if not present
- */
-function ensureCached(fileUrl: string, cachePath: string, callback: (err?: Error | null) => void): void {
-  if (fs.existsSync(cachePath)) {
-    console.log(`    Using cached: ${path.basename(cachePath)}`);
-    callback();
-    return;
-  }
-
-  console.log(`    Downloading: ${fileUrl}...`);
-  getFile(fileUrl, cachePath, (err) => {
-    if (err) return callback(err);
-    console.log('    Download complete');
-    callback();
-  });
 }
 
 /**
@@ -211,9 +196,6 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
       }
 
       // Ensure directories exist
-      if (!fs.existsSync(CACHE_DIR)) {
-        mkdirp.sync(CACHE_DIR);
-      }
       if (!fs.existsSync(TMP_DIR)) {
         mkdirp.sync(TMP_DIR);
       }
@@ -294,8 +276,8 @@ describe('XZ decoder comparison - xz-compat vs native tar', () => {
           });
         };
 
-        if (config.downloadUrl) {
-          ensureCached(config.downloadUrl, archivePath, afterDownload);
+        if (config.download) {
+          downloadFixture(config.download, (err) => afterDownload(err));
         } else {
           afterDownload();
         }
